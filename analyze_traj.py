@@ -12,6 +12,10 @@ plt.style.use('ggplot') # Make the graphs a bit prettier
 
 color_list=[c['color'] for c in list(plt.rcParams['axes.prop_cycle'])]
 
+def get_cmap_color(value, colormap, vmin=None, vmax=None):
+    norm = plt.Normalize(vmin, vmax)
+    return colormap(norm(value))
+
 def scale_dim(df,timescale,lengthscale):
     #time
     df['t']=df['frame']*timescale
@@ -36,6 +40,9 @@ def compute_parameters(df):
             df.loc[ind[1:],'v'+dim]=components[:-1].values
     #velocity modulus
     df['v']=sqrt(df['vx']**2+df['vy']**2+df['vz']**2)
+
+    #relative z: centered around mean
+    df['z_rel']=df['z_scaled']-df['z_scaled'].mean()
     
 def get_info(dirdata):
     filename=osp.join(dirdata,"info.txt")
@@ -56,7 +63,7 @@ def get_info(dirdata):
         print "ERROR: info.txt doesn't exist or is not at the right place"
     return info
 
-def plot_frame_cells(df,groups,frame,data_dir,plot_traj=False,z_labeling=False,filtered_tracks=None,hide_labels=False):
+def plot_frame_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],filtered_tracks=None,hide_labels=False):
     """ Print the tracked pictures with updated (=relinked) tracks"""
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
@@ -66,10 +73,21 @@ def plot_frame_cells(df,groups,frame,data_dir,plot_traj=False,z_labeling=False,f
         track_dir=osp.join(data_dir,'traj_subset')
     if osp.isdir(track_dir)==False:
         os.mkdir(track_dir)
+
     group=groups.get_group(frame).reset_index(drop=True)
     r,c=group.shape
     if plot_traj:
         track_groups=df.groupby(['traj'])
+    z_labeling=False
+    if len(z_lim)>0:
+        z_labeling=True
+        z_map=linspace(z_lim[0],z_lim[1],1000)
+        #create z color map
+        fig2=figure()
+        Z = [[0,0],[0,0]]
+        cont = plt.contourf(Z, z_map, cmap=cm.plasma)
+        plt.close(fig2)
+
     #import image
     filename=osp.join(data_dir,'raw/max_intensity_%04d.png'%int(frame))
     im = io.imread(filename)
@@ -94,10 +112,12 @@ def plot_frame_cells(df,groups,frame,data_dir,plot_traj=False,z_labeling=False,f
                 traj_length,c=traj.shape
                 if traj_length>1:
                     if z_labeling:
-                        #create z color map
+                        X=traj['x'].values;Y=traj['y'].values;Z=traj['z_rel'].values; #convert to numpy to optimize speed
+                        for j in range(1,traj_length):
+                            ax.plot([X[j-1],X[j]],[Y[j-1],Y[j]],color=get_cmap_color(Z[j],cm.plasma, vmin=z_lim[0], vmax=z_lim[1]))
                     else:
                         ax.plot(traj['x'],traj['y'],ls='-',color=color_list[track%7])
-                        ax.axis([xmin, ymin, xmax, ymax])
+                    ax.axis([xmin, ymin, xmax, ymax])
 
     else:
         for i,track in enumerate(filtered_tracks):
@@ -113,8 +133,18 @@ def plot_frame_cells(df,groups,frame,data_dir,plot_traj=False,z_labeling=False,f
                     traj=get_obj_traj(track_groups,track,max_frame=frame)
                     traj_length,c=traj.shape
                     if traj_length>1:
-                        ax.plot(traj['x'],traj['y'],ls='-',color=color_list[i%7])
-                        ax.axis([xmin, ymin, xmax, ymax])
+                        if z_labeling:
+                            X=traj['x'].values;Y=traj['y'].values;Z=traj['z_rel'].values; #convert to numpy to optimize speed
+                            for j in range(1,traj_length):
+                                ax.plot([X[j-1],X[j]],[Y[j-1],Y[j]],color=get_cmap_color(Z[j],cm.plasma, vmin=z_lim[0], vmax=z_lim[1]))
+                        else:
+                            ax.plot(traj['x'],traj['y'],ls='-',color=color_list[track%7])
+                    ax.axis([xmin, ymin, xmax, ymax])
+    if z_labeling:
+        cbaxes = fig.add_axes([0.4, 0.935, 0.025, 0.05])
+        cbar = fig.colorbar(cont,cax = cbaxes,label='$z\ (\mu m)$')
+        cbaxes.tick_params(labelsize=5,color='w')
+        cbaxes.yaxis.label.set_color('white')
     filename=osp.join(track_dir,'traj_%04d.png'%int(frame))
     fig.savefig(filename, dpi=300)
     close('all')
@@ -122,13 +152,13 @@ def plot_frame_cells(df,groups,frame,data_dir,plot_traj=False,z_labeling=False,f
 def get_obj_traj(track_groups,track,max_frame=None):
     '''gets the trajectory of an object. track_groups is the output of a groupby(['relabel'])'''
     group=track_groups.get_group(track)
-    trajectory=group[['frame','t','x','y','z','v']].copy()
+    trajectory=group[['frame','t','x','y','z','z_scaled','z_rel','v']].copy()
     if max_frame is not None:
         trajectory=trajectory[trajectory['frame']<=max_frame]
     return trajectory.reset_index(drop=True)
 
-def plot_frame_vfield(df,groups,frame,data_dir,interpolate=False,filtered_tracks=False,grid_step=10):
-    """ Print the tracked pictures with updated (=relinked) tracks"""
+def plot_frame_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=False,plot_field=True):
+    """ Plot velocity field and compute avg vfield on a grid if avg_grid is a int giving the number of square in the X direction"""
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
     if filtered_tracks:
@@ -139,7 +169,6 @@ def plot_frame_vfield(df,groups,frame,data_dir,interpolate=False,filtered_tracks
     if osp.isdir(track_dir)==False:
         os.mkdir(track_dir)
     group=groups.get_group(frame).reset_index(drop=True)
-    r,c=group.shape
     #import image
     filename=osp.join(data_dir,'raw/max_intensity_%04d.png'%int(frame))
     im = io.imread(filename)
@@ -149,25 +178,81 @@ def plot_frame_vfield(df,groups,frame,data_dir,interpolate=False,filtered_tracks
     ax = fig.add_axes([0, 0, 1, 1])
     ax.imshow(im,aspect='auto',origin='lower')
     xmin, ymin, xmax, ymax=ax.axis('off')
-    if interpolate:
-        grid_x, grid_y = np.mgrid[0:m:m/grid_step, 0:n:n/grid_step]
-        grid=[]
-        for p in ['vx','vy','vz']:
-            points=df[['x','y']].values
-            values=df[p].values
-            grid.append(sci.griddata(points, values, (grid_x, grid_y), method='linear'))
-        quiver(grid_x,grid_y,grid[0],grid[1],grid[2])
-        ax.axis([xmin, ymin, xmax, ymax])
+    #plot quiver
+    if avg_grid is not None:
+        if avg_grid<1:
+            print "ERROR: avg_grid <1"
+            return
+        res = avg_grid+1 #number of bounds = nmuber of cells + 1
+        xsubgrid=linspace(xmin,ymin,res)
+        cell_size = xsubgrid[1]-xsubgrid[0]
+        ysubgrid=arange(xmax,ymax,cell_size)
+        X=[];Y=[];VX=[];VY=[];VZ=[] #new data
+        for i,xg in enumerate(xsubgrid[:-1]):
+            for j,yg in enumerate(ysubgrid[:-1]):
+                xg1=xsubgrid[i+1];yg1=ysubgrid[j+1]
+                ind=((group['x']>=xg) & (group['x']<xg1) & (group['y']>=yg) & (group['y']<yg1))
+                VX.append(group[ind]['vx'].mean());VY.append(group[ind]['vy'].mean());VZ.append(group[ind]['vz'].mean())
+                X.append(xg+(xg1-xg)*0.5);Y.append(yg+(yg1-yg)*0.5) #center of the cell
+        
+        avg_vfield = pd.DataFrame({'x':X,'y':Y,'vx':VX,'vy':VY,'vz':VZ})
+        Q=quiver(avg_vfield['x'],avg_vfield['y'],avg_vfield['vx'],avg_vfield['vy'],avg_vfield['vz'],units='x',cmap='plasma')
     else:
         Q=quiver(group['x'],group['y'],group['vx'],group['vy'],group['vz'],units='x',cmap='plasma')
+    
+    if plot_field:
         cbaxes = fig.add_axes([0.4, 0.935, 0.025, 0.05])
         cbar = fig.colorbar(Q,cax = cbaxes,label='$v_z\ (\mu m.min^{-1})$')
         cbaxes.tick_params(labelsize=5,color='w')
         cbaxes.yaxis.label.set_color('white')
         ax.axis([xmin, ymin, xmax, ymax])
-    filename=osp.join(track_dir,'vfield_%04d.png'%int(frame))
-    fig.savefig(filename, dpi=600)
+        filename=osp.join(track_dir,'vfield_%04d.png'%int(frame)) if avg_grid is None else osp.join(track_dir,'avg_vfield_%04d.png'%int(frame))
+        fig.savefig(filename, dpi=600)
     close('all')
+    if avg_grid is not None:
+        return avg_vfield
+
+def plot_frame_div(avg_vfield,frame,data_dir):
+    """ Plot 2D divergence"""
+    print '\rplotting frame '+str(frame),
+    sys.stdout.flush()
+    track_dir=osp.join(data_dir,'divergence')
+    if osp.isdir(track_dir)==False:
+        os.mkdir(track_dir)
+    
+    #import image
+    filename=osp.join(data_dir,'raw/max_intensity_%04d.png'%int(frame))
+    im = io.imread(filename)
+    n,m,d = im.shape
+    fig=figure(frameon=False)
+    fig.set_size_inches(m/300,n/300)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.imshow(im,aspect='auto',origin='lower')
+    xmin, ymin, xmax, ymax=ax.axis('off')
+
+    #compute div
+    X=[];Y=[];div=[]
+    x_array=avg_vfield['x'].unique(); y_array=avg_vfield['y'].unique()
+    for i,xi in enumerate(x_array[1:-1]):
+        i+=1
+        dx=x_array[i+1]-xi
+        for j,yj in enumerate(y_array[1:-1]):
+            j+=1 # indices starts at 0 instead of 1
+            dy=y_array[j+1]-yj
+            vx1=avg_vfield[((avg_vfield['x']==x_array[i+1]) & (avg_vfield['y']==yj))]['vx'].values[0]
+            vx_1=avg_vfield[((avg_vfield['x']==x_array[i-1]) & (avg_vfield['y']==yj))]['vx'].values[0]
+            vy1=avg_vfield[((avg_vfield['y']==y_array[j+1]) & (avg_vfield['x']==xi))]['vy'].values[0]
+            vy_1=avg_vfield[((avg_vfield['y']==y_array[j-1]) & (avg_vfield['x']==xi))]['vy'].values[0]
+            Dvx=(vx1-vx_1)/(2*dx);Dvy=(vy1-vy_1)/(2*dy)
+            X.append(xi);Y.append(yj);div.append(Dvx+Dvy)
+
+    X=array(X);X=X.reshape(len(y_array)-2,len(x_array)-2)
+    Y=array(Y);Y=Y.reshape(len(y_array)-2,len(x_array)-2)
+    div=array(div);div=div.reshape(len(y_array)-2,len(x_array)-2)
+    print X.shape,Y.shape,div.shape
+    ax.pcolormesh(X,Y,div,cmap=cm.plasma)
+    ax.axis([xmin, ymin, xmax, ymax])
+    plt.show()
 
 
 def filter_by_traj_len(df,min_traj_len=1,max_traj_len=None):
