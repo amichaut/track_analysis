@@ -159,6 +159,7 @@ def get_obj_traj(track_groups,track,max_frame=None):
 
 def plot_frame_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=False,plot_field=True):
     """ Plot velocity field and compute avg vfield on a grid if avg_grid is a int giving the number of square in the X direction"""
+    close('all')
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
     if filtered_tracks:
@@ -199,7 +200,7 @@ def plot_frame_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=Fal
         Q=quiver(avg_vfield['x'],avg_vfield['y'],avg_vfield['vx'],avg_vfield['vy'],avg_vfield['vz'],units='x',cmap='plasma')
     else:
         Q=quiver(group['x'],group['y'],group['vx'],group['vy'],group['vz'],units='x',cmap='plasma')
-    
+
     if plot_field:
         cbaxes = fig.add_axes([0.4, 0.935, 0.025, 0.05])
         cbar = fig.colorbar(Q,cax = cbaxes,label='$v_z\ (\mu m.min^{-1})$')
@@ -208,18 +209,19 @@ def plot_frame_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=Fal
         ax.axis([xmin, ymin, xmax, ymax])
         filename=osp.join(track_dir,'vfield_%04d.png'%int(frame)) if avg_grid is None else osp.join(track_dir,'avg_vfield_%04d.png'%int(frame))
         fig.savefig(filename, dpi=600)
-    close('all')
+    close()
     if avg_grid is not None:
         return avg_vfield
 
 def plot_frame_div(avg_vfield,frame,data_dir):
     """ Plot 2D divergence"""
+    close('all')
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
     track_dir=osp.join(data_dir,'divergence')
     if osp.isdir(track_dir)==False:
         os.mkdir(track_dir)
-    
+
     #import image
     filename=osp.join(data_dir,'raw/max_intensity_%04d.png'%int(frame))
     im = io.imread(filename)
@@ -231,29 +233,31 @@ def plot_frame_div(avg_vfield,frame,data_dir):
     xmin, ymin, xmax, ymax=ax.axis('off')
 
     #compute div
-    X=[];Y=[];div=[]
     x_array=avg_vfield['x'].unique(); y_array=avg_vfield['y'].unique()
-    for i,xi in enumerate(x_array[1:-1]):
-        i+=1
-        dx=x_array[i+1]-xi
-        for j,yj in enumerate(y_array[1:-1]):
-            j+=1 # indices starts at 0 instead of 1
-            dy=y_array[j+1]-yj
-            vx1=avg_vfield[((avg_vfield['x']==x_array[i+1]) & (avg_vfield['y']==yj))]['vx'].values[0]
-            vx_1=avg_vfield[((avg_vfield['x']==x_array[i-1]) & (avg_vfield['y']==yj))]['vx'].values[0]
-            vy1=avg_vfield[((avg_vfield['y']==y_array[j+1]) & (avg_vfield['x']==xi))]['vy'].values[0]
-            vy_1=avg_vfield[((avg_vfield['y']==y_array[j-1]) & (avg_vfield['x']==xi))]['vy'].values[0]
+    X, Y = np.meshgrid(x_array,y_array)
+    div = zeros((X.shape[0],X.shape[1]))
+    for i in range(1,X.shape[0]-1):
+        for j in range(1,X.shape[1]-1):
+            dy=Y[i,j]-Y[i-1,j]; dx=X[i,j]-X[i,j-1]
+            vx1=avg_vfield[((avg_vfield['x']==X[i,j+1]) & (avg_vfield['y']==Y[i,j+1]))]['vx'].values[0]
+            vx_1=avg_vfield[((avg_vfield['x']==X[i,j-1]) & (avg_vfield['y']==Y[i,j-1]))]['vx'].values[0]
+            vy1=avg_vfield[((avg_vfield['x']==X[i+1,j]) & (avg_vfield['y']==Y[i+1,j]))]['vx'].values[0]
+            vy_1=avg_vfield[((avg_vfield['x']==X[i-1,j]) & (avg_vfield['y']==Y[i-1,j]))]['vx'].values[0]
             Dvx=(vx1-vx_1)/(2*dx);Dvy=(vy1-vy_1)/(2*dy)
-            X.append(xi);Y.append(yj);div.append(Dvx+Dvy)
+            div[i-1,j-1]=Dvx+Dvy
 
-    X=array(X);X=X.reshape(len(y_array)-2,len(x_array)-2)
-    Y=array(Y);Y=Y.reshape(len(y_array)-2,len(x_array)-2)
-    div=array(div);div=div.reshape(len(y_array)-2,len(x_array)-2)
-    print X.shape,Y.shape,div.shape
-    ax.pcolormesh(X,Y,div,cmap=cm.plasma)
+    div_masked = np.ma.array (div, mask=np.isnan(div))
+    cmap=cm.plasma; cmap.set_bad('w',alpha=0) #set NAN transparent
+    C=ax.pcolormesh(X[1:-1,1:-1],Y[1:-1,1:-1],div_masked[1:-1,1:-1],cmap=cmap,alpha=0.5,vmin=-0.01,vmax=0.01)
+    cbaxes = fig.add_axes([0.4, 0.935, 0.025, 0.05])
+    cbar = fig.colorbar(C,cax = cbaxes,label='$div(\overrightarrow{v})\ (min^{-1})$')
+    cbaxes.tick_params(labelsize=5,color='w')
+    cbaxes.yaxis.label.set_color('white')
     ax.axis([xmin, ymin, xmax, ymax])
-    plt.show()
-
+    filename=osp.join(track_dir,'div_%04d.png'%int(frame))
+    fig.savefig(filename, dpi=300)
+    close()
+    return div
 
 def filter_by_traj_len(df,min_traj_len=1,max_traj_len=None):
     df2=pd.DataFrame()
