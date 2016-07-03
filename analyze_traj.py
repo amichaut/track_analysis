@@ -8,6 +8,9 @@ import os
 import scipy.interpolate as sci
 import sys
 import pickle
+import multiprocessing
+from joblib import Parallel, delayed
+
 plt.style.use('ggplot') # Make the graphs a bit prettier
 
 color_list=[c['color'] for c in list(plt.rcParams['axes.prop_cycle'])]
@@ -270,12 +273,20 @@ def filter_by_traj_len(df,min_traj_len=1,max_traj_len=None):
             df2=pd.concat([df2,track])
     return df2
 
+def plot_all_frame(plot_func,df,data_dir,parallelize=False,**kwargs):
+    groups=df.groupby('frame')
+    if parallelize:
+        num_cores = multiprocessing.cpu_count()
+        Parallel(n_jobs=num_cores)(delayed(plot_func)(df,groups,frame,data_dir,**kwargs) for frame in df['frame'].unique())
+    else:
+        for frame in df['frame'].unique():
+            plot_func(df,groups,frame,data_dir,**kwargs)
 
-def run(data_dir,refresh=False,plot_frame=True,plot_data=True,plot_modified_tracks=False,plot_all_traj=False):
+def get_data(data_dir,refresh=False,plot_frame=True,plot_data=True,plot_modified_tracks=False,plot_all_traj=False):
     #import
     pickle_fn=osp.join(data_dir,"data_base.p")
     if osp.exists(pickle_fn)==False or refresh:
-#         data=loadtxt(osp.join(data_dir,'test_data.txt'))
+		#data=loadtxt(osp.join(data_dir,'test_data.txt'))
         data=loadtxt(osp.join(data_dir,'table.txt'))
         info=get_info(data_dir)
         for inf in ['lengthscale','delta_t','columns']:
