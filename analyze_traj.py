@@ -216,7 +216,7 @@ def plot_frame_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=Fal
     if avg_grid is not None:
         return avg_vfield
 
-def plot_frame_div(avg_vfield,frame,data_dir):
+def plot_frame_div(df,groups,frame,data_dir,avg_vfield):
     """ Plot 2D divergence"""
     close('all')
     print '\rplotting frame '+str(frame),
@@ -273,14 +273,39 @@ def filter_by_traj_len(df,min_traj_len=1,max_traj_len=None):
             df2=pd.concat([df2,track])
     return df2
 
-def plot_all_frame(plot_func,df,data_dir,parallelize=False,**kwargs):
+def plot_all_frame(plot_func,df,data_dir,parallelize=True,avg_vfields=None,**kwargs):
     groups=df.groupby('frame')
     if parallelize:
         num_cores = multiprocessing.cpu_count()
-        Parallel(n_jobs=num_cores)(delayed(plot_func)(df,groups,frame,data_dir,**kwargs) for frame in df['frame'].unique())
+        if avg_vfields is None:
+	        Parallel(n_jobs=num_cores)(delayed(plot_func)(df,groups,frame,data_dir,**kwargs) for frame in df['frame'].unique())
+    	else:
+			Parallel(n_jobs=num_cores)(delayed(plot_func)(df,groups,frame,data_dir,avg_vfields['vfield_list'][i],**kwargs) for i,frame in enumerate(avg_vfields['frame_list']))   		
     else:
         for frame in df['frame'].unique():
             plot_func(df,groups,frame,data_dir,**kwargs)
+
+def get_avg_vfields(data_dir,df=None,avg_grid=10):
+    refresh=False
+    pickle_fn=osp.join(data_dir,'avg_fields.p')
+    #check pickle exists
+    if osp.exists(pickle_fn)==False:
+        refresh=True
+    if df is not None:
+        refresh=True
+        
+    if refresh:
+        avg_vfields={'avg_grid':avg_grid,'frame_list':[],'vfield_list':[]}
+        groups=df.groupby('frame')
+        for frame in df['frame'].unique():
+            avg_vfields['frame_list'].append(frame)
+            avg_vfields['vfield_list'].append(plot_frame_vfield(df,groups,frame,data_dir,avg_grid=avg_grid,plot_field=False))
+        #update pickle
+        pickle.dump(avg_vfields,open(pickle_fn,"wb"))
+    else:
+        avg_vfields=pickle.load(open(pickle_fn,"rb"))
+    
+    return avg_vfields
 
 def get_data(data_dir,refresh=False,plot_frame=True,plot_data=True,plot_modified_tracks=False,plot_all_traj=False):
     #import
