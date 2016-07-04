@@ -216,7 +216,7 @@ def plot_frame_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=Fal
     if avg_grid is not None:
         return avg_vfield
 
-def plot_frame_div(df,groups,frame,data_dir,avg_vfield):
+def plot_frame_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True):
     """ Plot 2D divergence"""
     close('all')
     print '\rplotting frame '+str(frame),
@@ -225,15 +225,16 @@ def plot_frame_div(df,groups,frame,data_dir,avg_vfield):
     if osp.isdir(track_dir)==False:
         os.mkdir(track_dir)
 
-    #import image
-    filename=osp.join(data_dir,'raw/max_intensity_%04d.png'%int(frame))
-    im = io.imread(filename)
-    n,m,d = im.shape
-    fig=figure(frameon=False)
-    fig.set_size_inches(m/300,n/300)
-    ax = fig.add_axes([0, 0, 1, 1])
-    ax.imshow(im,aspect='auto',origin='lower')
-    xmin, ymin, xmax, ymax=ax.axis('off')
+    if plot_field:
+        #import image
+        filename=osp.join(data_dir,'raw/max_intensity_%04d.png'%int(frame))
+        im = io.imread(filename)
+        n,m,d = im.shape
+        fig=figure(frameon=False)
+        fig.set_size_inches(m/300,n/300)
+        ax = fig.add_axes([0, 0, 1, 1])
+        ax.imshow(im,aspect='auto',origin='lower')
+        xmin, ymin, xmax, ymax=ax.axis('off')
 
     #compute div
     x_array=avg_vfield['x'].unique(); y_array=avg_vfield['y'].unique()
@@ -244,23 +245,76 @@ def plot_frame_div(df,groups,frame,data_dir,avg_vfield):
             dy=Y[i,j]-Y[i-1,j]; dx=X[i,j]-X[i,j-1]
             vx1=avg_vfield[((avg_vfield['x']==X[i,j+1]) & (avg_vfield['y']==Y[i,j+1]))]['vx'].values[0]
             vx_1=avg_vfield[((avg_vfield['x']==X[i,j-1]) & (avg_vfield['y']==Y[i,j-1]))]['vx'].values[0]
-            vy1=avg_vfield[((avg_vfield['x']==X[i+1,j]) & (avg_vfield['y']==Y[i+1,j]))]['vx'].values[0]
-            vy_1=avg_vfield[((avg_vfield['x']==X[i-1,j]) & (avg_vfield['y']==Y[i-1,j]))]['vx'].values[0]
+            vy1=avg_vfield[((avg_vfield['x']==X[i+1,j]) & (avg_vfield['y']==Y[i+1,j]))]['vy'].values[0]
+            vy_1=avg_vfield[((avg_vfield['x']==X[i-1,j]) & (avg_vfield['y']==Y[i-1,j]))]['vy'].values[0]
             Dvx=(vx1-vx_1)/(2*dx);Dvy=(vy1-vy_1)/(2*dy)
             div[i-1,j-1]=Dvx+Dvy
 
-    div_masked = np.ma.array (div, mask=np.isnan(div))
-    cmap=cm.plasma; cmap.set_bad('w',alpha=0) #set NAN transparent
-    C=ax.pcolormesh(X[1:-1,1:-1],Y[1:-1,1:-1],div_masked[1:-1,1:-1],cmap=cmap,alpha=0.5,vmin=-0.01,vmax=0.01)
-    cbaxes = fig.add_axes([0.4, 0.935, 0.025, 0.05])
-    cbar = fig.colorbar(C,cax = cbaxes,label='$div(\overrightarrow{v})\ (min^{-1})$')
-    cbaxes.tick_params(labelsize=5,color='w')
-    cbaxes.yaxis.label.set_color('white')
-    ax.axis([xmin, ymin, xmax, ymax])
-    filename=osp.join(track_dir,'div_%04d.png'%int(frame))
-    fig.savefig(filename, dpi=300)
+    if plot_field:
+        div_masked = np.ma.array (div, mask=np.isnan(div))
+        if fixed_vlim is not None:
+            vmin=fixed_vlim[0];vmax=fixed_vlim[1]
+        else:
+            vmin=div_masked.min();vmax=div_masked.max()
+        cmap=cm.plasma; cmap.set_bad('w',alpha=0) #set NAN transparent
+        C=ax.pcolormesh(X[1:-1,1:-1],Y[1:-1,1:-1],div_masked[1:-1,1:-1],cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
+        cbaxes = fig.add_axes([0.4, 0.935, 0.025, 0.05])
+        cbar = fig.colorbar(C,cax = cbaxes,label='$div(\overrightarrow{v})\ (min^{-1})$')
+        cbaxes.tick_params(labelsize=5,color='w')
+        cbaxes.yaxis.label.set_color('white')
+        ax.axis([xmin, ymin, xmax, ymax])
+        filename=osp.join(track_dir,'div_%04d.png'%int(frame))
+        fig.savefig(filename, dpi=300)
     close()
     return div
+
+def plot_frame_mean_vel(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True):
+    close('all')
+    print '\rplotting frame '+str(frame),
+    sys.stdout.flush()
+    track_dir=osp.join(data_dir,'mean_vel')
+    if osp.isdir(track_dir)==False:
+        os.mkdir(track_dir)
+
+    if plot_field:
+        #import image
+        filename=osp.join(data_dir,'raw/max_intensity_%04d.png'%int(frame))
+        im = io.imread(filename)
+        n,m,d = im.shape
+        fig=figure(frameon=False)
+        fig.set_size_inches(m/300,n/300)
+        ax = fig.add_axes([0, 0, 1, 1])
+        ax.imshow(im,aspect='auto',origin='lower')
+        xmin, ymin, xmax, ymax=ax.axis('off')
+
+    #compute div
+    x_array=avg_vfield['x'].unique(); y_array=avg_vfield['y'].unique()
+    X, Y = np.meshgrid(x_array,y_array)
+    mean_vel = zeros((X.shape[0],X.shape[1]))
+    for i in range(0,X.shape[0]):
+        for j in range(0,X.shape[1]):
+            vx=avg_vfield[((avg_vfield['x']==X[i,j]) & (avg_vfield['y']==Y[i,j]))]['vx'].values[0]
+            vy=avg_vfield[((avg_vfield['x']==X[i,j]) & (avg_vfield['y']==Y[i,j]))]['vy'].values[0]
+            vz=avg_vfield[((avg_vfield['x']==X[i,j]) & (avg_vfield['y']==Y[i,j]))]['vz'].values[0]
+            mean_vel[i,j]=sqrt(vx**2+vy**2+vz**2)
+
+    if plot_field:
+        mean_vel_masked = np.ma.array (mean_vel, mask=np.isnan(mean_vel))
+        if fixed_vlim is not None:
+            vmin=fixed_vlim[0];vmax=fixed_vlim[1]
+        else:
+            vmin=mean_vel_masked.min();vmax=mean_vel_masked.max()
+        cmap=cm.plasma; cmap.set_bad('w',alpha=0) #set NAN transparent
+        C=ax.pcolormesh(X,Y,mean_vel_masked,cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
+        cbaxes = fig.add_axes([0.4, 0.935, 0.025, 0.05])
+        cbar = fig.colorbar(C,cax = cbaxes,label='$v\ (\mu m.min^{-1})$')
+        cbaxes.tick_params(labelsize=5,color='w')
+        cbaxes.yaxis.label.set_color('white')
+        ax.axis([xmin, ymin, xmax, ymax])
+        filename=osp.join(track_dir,'mean_vel_%04d.png'%int(frame))
+        fig.savefig(filename, dpi=300)
+    close()
+    return mean_vel
 
 def filter_by_traj_len(df,min_traj_len=1,max_traj_len=None):
     df2=pd.DataFrame()
@@ -329,3 +383,11 @@ def get_data(data_dir,refresh=False,plot_frame=True,plot_data=True,plot_modified
     
     return df
 
+def get_vlim(plot_func,df,data_dir,avg_vfields,**kwargs):
+    groups=df.groupby('frame')
+    vmin=1000;vmax=-1000
+    for i,frame in enumerate(avg_vfields['frame_list']):
+        data=plot_func(df,groups,frame,data_dir,avg_vfields['vfield_list'][i],plot_field=False,**kwargs)
+        data = np.ma.array (data, mask=np.isnan(data))
+        vmin=min(vmin,data.min());vmax=max(vmax,data.max())
+    return [vmin,vmax]
