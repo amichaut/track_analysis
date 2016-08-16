@@ -1,3 +1,0 @@
-columns : traj,frame,x,y,z,m0,m1,m2,m3,m4,NPscore
-delta_t : 8
-lengthscale : 1.5996
