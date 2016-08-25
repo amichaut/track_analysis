@@ -97,7 +97,7 @@ def get_data(data_dir,refresh=False,plot_frame=True,plot_data=True,plot_modified
     #import
     pickle_fn=osp.join(data_dir,"data_base.p")
     if osp.exists(pickle_fn)==False or refresh:
-		#data=loadtxt(osp.join(data_dir,'test_data.txt'))
+        #data=loadtxt(osp.join(data_dir,'test_data.txt'))
         data=loadtxt(osp.join(data_dir,'table.txt'))
         info=get_info(data_dir)
         for inf in ['lengthscale','delta_t','columns']:
@@ -144,8 +144,8 @@ def filter_by_traj_len(df,min_traj_len=1,max_traj_len=None):
     return df2
 
 def get_background(df,dirdata,frame,no_bkg=False):
-	"""Get image background or create white backgound if no_bkg"""
-	if not osp.exists(osp.join(data_dir,'raw')): #check if images exist 
+    """Get image background or create white backgound if no_bkg"""
+    if not osp.exists(osp.join(data_dir,'raw')): #check if images exist 
        no_bkg=True
     if no_bkg:
         #get approximative image size
@@ -162,11 +162,32 @@ def get_background(df,dirdata,frame,no_bkg=False):
     xmin, ymin, xmax, ymax=ax.axis('off')
     return fig,ax,xmin,ymin,xmax,ymax
 
+def make_grid(xres,dimensions=None,lengthscale=None):
+    """make a meshgrid. The boundaries can be passed by dimensions as [xmin,xmax,ymin,ymax] or using the raw image dimensions. xres is the number of cells in the grid along the x axis.
+	It returns two grids: the node_grid with the positions of the nodes of each cells, and the center_grid with the position of the center of each cell"""
+    if dimensions is None:
+        if not osp.exists(osp.join(data_dir,'raw')):
+            print """ERROR: the grid can't be created, no dimensions are available"""
+            return
+        else:
+            filename=osp.join(data_dir,'raw/%04d.png'%int(frame))
+            im = io.imread(filename)
+            ymax,xmax,d = im.shape
+            xmin=0;ymin=0
+            ymax/=lengthscale; xmax/=lengthscale
+    else:
+        [xmin,xmax,ymin,ymax] = dimensions
+
+    step=float(xmax-xmin)/xres
+    node_grid=meshgrid(arange(xmin,xmax+step,step),arange(ymin,ymax+step,step))
+    center_grid=meshgrid(arange(xmin+step/2,xmax,step),arange(ymin+step/2,ymax,step))
+    return node_grid,center_grid
+
 #################################################################
 ###########   PLOT METHODS   ####################################
 #################################################################
 
-def plot_frame_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],filtered_tracks=None,hide_labels=False,no_bkg=False):
+def plot_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],filtered_tracks=None,hide_labels=False,no_bkg=False):
     """ Print the tracked pictures with updated (=relinked) tracks"""
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
@@ -245,7 +266,7 @@ def plot_frame_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],filtered_
     fig.savefig(filename, dpi=300)
     close('all')
 
-def plot_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=False,plot_field=True):
+def plot_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=False,plot_field=True,no_bkg=False):
     """ Plot velocity field and compute avg vfield on a grid if avg_grid is a int giving the number of square in the X direction"""
     close('all')
     print '\rplotting frame '+str(frame),
@@ -294,7 +315,7 @@ def plot_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=False,plo
     if avg_grid is not None:
         return avg_vfield
 
-def plot_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True):
+def plot_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True,no_bkg=False):
     """ Plot 2D divergence"""
     close('all')
     print '\rplotting frame '+str(frame),
@@ -318,7 +339,7 @@ def plot_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True
             div[i-1,j-1]=Dvx+Dvy
 
     if plot_field:
-    	fig,ax,xmin,ymin,xmax,ymax=get_background(df,dirdata,frame,no_bkg=no_bkg)
+        fig,ax,xmin,ymin,xmax,ymax=get_background(df,dirdata,frame,no_bkg=no_bkg)
         div_masked = np.ma.array (div, mask=np.isnan(div))
         if fixed_vlim is not None:
             vmin=fixed_vlim[0];vmax=fixed_vlim[1]
@@ -336,7 +357,7 @@ def plot_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True
     close()
     return div
 
-def plot_mean_vel(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True):
+def plot_mean_vel(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True,no_bkg=False):
     close('all')
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
@@ -379,16 +400,23 @@ def plot_all_frame(plot_func,df,data_dir,parallelize=True,avg_vfields=None,**kwa
     if parallelize:
         num_cores = multiprocessing.cpu_count()
         if avg_vfields is None:
-	        Parallel(n_jobs=num_cores)(delayed(plot_func)(df,groups,frame,data_dir,**kwargs) for frame in df['frame'].unique())
-    	else:
-			Parallel(n_jobs=num_cores)(delayed(plot_func)(df,groups,frame,data_dir,avg_vfields['vfield_list'][i],**kwargs) for i,frame in enumerate(avg_vfields['frame_list']))   		
+            Parallel(n_jobs=num_cores)(delayed(plot_func)(df,groups,frame,data_dir,**kwargs) for frame in df['frame'].unique())
+        else:
+            Parallel(n_jobs=num_cores)(delayed(plot_func)(df,groups,frame,data_dir,avg_vfields['vfield_list'][i],**kwargs) for i,frame in enumerate(avg_vfields['frame_list']))	
     else:
         for frame in df['frame'].unique():
             plot_func(df,groups,frame,data_dir,**kwargs)
 
-def plot_z_flow(df,frame,z0,grid,plot_field):
-	"""Plot the flow (defined as the net number of cells going through a surface element in the increasing z direction) through the plane of z=z0"""
+def plot_z_flow(df,frame,z0,grid,plot_field,no_bkg=False):
+    """Plot the flow (defined as the net number of cells going through a surface element in the increasing z direction) through the plane of z=z0"""
     
+    close('all')
+    print '\rplotting frame '+str(frame),
+    sys.stdout.flush()
+    track_dir=osp.join(data_dir,'z_flow')
+    if osp.isdir(track_dir)==False:
+        os.mkdir(track_dir)
+
     df_layer=df[abs(df['vz'])>=abs(z0-df['z'])] #layer of cells crossing the surface
     df_ascending=df_layer[((df_layer['vz']>=0) & (df_layer['z']<=z0))] #ascending cells below the surface
     df_descending=df_layer[((df_layer['vz']<=0) & (df_layer['z']>=z0))] #descending cells above the surface
