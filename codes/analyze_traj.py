@@ -15,6 +15,11 @@ plt.style.use('ggplot') # Make the graphs a bit prettier
 
 color_list=[c['color'] for c in list(plt.rcParams['axes.prop_cycle'])]
 
+
+#################################################################
+###########   PREPARE METHODS   #################################
+#################################################################
+
 def get_cmap_color(value, colormap, vmin=None, vmax=None):
     norm = plt.Normalize(vmin, vmax)
     return colormap(norm(value))
@@ -66,7 +71,102 @@ def get_info(dirdata):
         print "ERROR: info.txt doesn't exist or is not at the right place"
     return info
 
-def plot_frame_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],filtered_tracks=None,hide_labels=False):
+def get_avg_vfields(data_dir,df=None,avg_grid=10):
+    refresh=False
+    pickle_fn=osp.join(data_dir,'avg_fields.p')
+    #check pickle exists
+    if osp.exists(pickle_fn)==False:
+        refresh=True
+    if df is not None:
+        refresh=True
+        
+    if refresh:
+        avg_vfields={'avg_grid':avg_grid,'frame_list':[],'vfield_list':[]}
+        groups=df.groupby('frame')
+        for frame in df['frame'].unique():
+            avg_vfields['frame_list'].append(frame)
+            avg_vfields['vfield_list'].append(plot_vfield(df,groups,frame,data_dir,avg_grid=avg_grid,plot_field=False))
+        #update pickle
+        pickle.dump(avg_vfields,open(pickle_fn,"wb"))
+    else:
+        avg_vfields=pickle.load(open(pickle_fn,"rb"))
+    
+    return avg_vfields
+
+def get_data(data_dir,refresh=False,plot_frame=True,plot_data=True,plot_modified_tracks=False,plot_all_traj=False):
+    #import
+    pickle_fn=osp.join(data_dir,"data_base.p")
+    if osp.exists(pickle_fn)==False or refresh:
+		#data=loadtxt(osp.join(data_dir,'test_data.txt'))
+        data=loadtxt(osp.join(data_dir,'table.txt'))
+        info=get_info(data_dir)
+        for inf in ['lengthscale','delta_t','columns']:
+            if info[inf]==-1:
+                print "WARNING: "+inf+" not provided in info.txt"
+        lengthscale=info["lengthscale"];timescale=info["delta_t"];columns=info["columns"]
+        df=pd.DataFrame(data[:,1:],columns=columns) 
+        #scale data
+        scale_dim(df,timescale,lengthscale)
+        compute_parameters(df)
+        #update pickle
+        pickle.dump(df, open( osp.join(data_dir,"data_base.p"), "wb" ) )
+    else:
+        df=pickle.load( open( pickle_fn, "rb" ))
+    
+    return df
+
+def get_vlim(plot_func,df,data_dir,avg_vfields,**kwargs):
+    groups=df.groupby('frame')
+    vmin=1000;vmax=-1000
+    for i,frame in enumerate(avg_vfields['frame_list']):
+        data=plot_func(df,groups,frame,data_dir,avg_vfields['vfield_list'][i],plot_field=False,**kwargs)
+        data = np.ma.array (data, mask=np.isnan(data))
+        vmin=min(vmin,data.min());vmax=max(vmax,data.max())
+    return [vmin,vmax]
+
+def get_obj_traj(track_groups,track,max_frame=None):
+    '''gets the trajectory of an object. track_groups is the output of a groupby(['relabel'])'''
+    group=track_groups.get_group(track)
+    trajectory=group[['frame','t','x','y','z','z_scaled','z_rel','v']].copy()
+    if max_frame is not None:
+        trajectory=trajectory[trajectory['frame']<=max_frame]
+    return trajectory.reset_index(drop=True)
+
+def filter_by_traj_len(df,min_traj_len=1,max_traj_len=None):
+    df2=pd.DataFrame()
+    if max_traj_len is None: #assign the longest possible track
+        max_traj_len=df['frame'].max()-df['frame'].min()+1
+    tracks=df.groupby('traj')
+    for t in df['traj'].unique():
+        track=tracks.get_group(t)
+        if track.shape[0]>=min_traj_len and track.shape[0]<=max_traj_len:
+            df2=pd.concat([df2,track])
+    return df2
+
+def get_background(df,dirdata,frame,no_bkg=False):
+	"""Get image background or create white backgound if no_bkg"""
+	if not osp.exists(osp.join(data_dir,'raw')): #check if images exist 
+       no_bkg=True
+    if no_bkg:
+        #get approximative image size
+        m=int(df['x'].max());n=int(df['y'].max())
+        im = ones((n,m,3)) #create white background ==> not ideal, it would be better not to use imshow and to modify axes rendering
+    else:
+        filename=osp.join(data_dir,'raw/%04d.png'%int(frame))
+        im = io.imread(filename)
+        n,m,d = im.shape
+    fig=figure(frameon=False)
+    fig.set_size_inches(m/300,n/300)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.imshow(im,aspect='auto',origin='lower')
+    xmin, ymin, xmax, ymax=ax.axis('off')
+    return fig,ax,xmin,ymin,xmax,ymax
+
+#################################################################
+###########   PLOT METHODS   ####################################
+#################################################################
+
+def plot_frame_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],filtered_tracks=None,hide_labels=False,no_bkg=False):
     """ Print the tracked pictures with updated (=relinked) tracks"""
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
@@ -92,14 +192,7 @@ def plot_frame_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],filtered_
         plt.close(fig2)
 
     #import image
-    filename=osp.join(data_dir,'raw/max_intensity_%04d.png'%int(frame))
-    im = io.imread(filename)
-    n,m,d = im.shape
-    fig=figure(frameon=False)
-    fig.set_size_inches(m/300,n/300)
-    ax = fig.add_axes([0, 0, 1, 1])
-    ax.imshow(im,aspect='auto',origin='lower')
-    xmin, ymin, xmax, ymax=ax.axis('off')
+    fig,ax,xmin,ymin,xmax,ymax=get_background(df,dirdata,frame,no_bkg=no_bkg)
     if filtered_tracks is None:
         for i in range(0,r):
             #write label
@@ -151,16 +244,8 @@ def plot_frame_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],filtered_
     filename=osp.join(track_dir,'traj_%04d.png'%int(frame))
     fig.savefig(filename, dpi=300)
     close('all')
-                      
-def get_obj_traj(track_groups,track,max_frame=None):
-    '''gets the trajectory of an object. track_groups is the output of a groupby(['relabel'])'''
-    group=track_groups.get_group(track)
-    trajectory=group[['frame','t','x','y','z','z_scaled','z_rel','v']].copy()
-    if max_frame is not None:
-        trajectory=trajectory[trajectory['frame']<=max_frame]
-    return trajectory.reset_index(drop=True)
 
-def plot_frame_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=False,plot_field=True):
+def plot_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=False,plot_field=True):
     """ Plot velocity field and compute avg vfield on a grid if avg_grid is a int giving the number of square in the X direction"""
     close('all')
     print '\rplotting frame '+str(frame),
@@ -174,14 +259,7 @@ def plot_frame_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=Fal
         os.mkdir(track_dir)
     group=groups.get_group(frame).reset_index(drop=True)
     #import image
-    filename=osp.join(data_dir,'raw/max_intensity_%04d.png'%int(frame))
-    im = io.imread(filename)
-    n,m,d = im.shape
-    fig=figure(frameon=False)
-    fig.set_size_inches(m/300,n/300)
-    ax = fig.add_axes([0, 0, 1, 1])
-    ax.imshow(im,aspect='auto',origin='lower')
-    xmin, ymin, xmax, ymax=ax.axis('off')
+    fig,ax,xmin,ymin,xmax,ymax=get_background(df,dirdata,frame,no_bkg=no_bkg)
     #plot quiver
     if avg_grid is not None:
         if avg_grid<1:
@@ -216,7 +294,7 @@ def plot_frame_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=Fal
     if avg_grid is not None:
         return avg_vfield
 
-def plot_frame_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True):
+def plot_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True):
     """ Plot 2D divergence"""
     close('all')
     print '\rplotting frame '+str(frame),
@@ -224,17 +302,6 @@ def plot_frame_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_fiel
     track_dir=osp.join(data_dir,'divergence')
     if osp.isdir(track_dir)==False:
         os.mkdir(track_dir)
-
-    if plot_field:
-        #import image
-        filename=osp.join(data_dir,'raw/max_intensity_%04d.png'%int(frame))
-        im = io.imread(filename)
-        n,m,d = im.shape
-        fig=figure(frameon=False)
-        fig.set_size_inches(m/300,n/300)
-        ax = fig.add_axes([0, 0, 1, 1])
-        ax.imshow(im,aspect='auto',origin='lower')
-        xmin, ymin, xmax, ymax=ax.axis('off')
 
     #compute div
     x_array=avg_vfield['x'].unique(); y_array=avg_vfield['y'].unique()
@@ -251,6 +318,7 @@ def plot_frame_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_fiel
             div[i-1,j-1]=Dvx+Dvy
 
     if plot_field:
+    	fig,ax,xmin,ymin,xmax,ymax=get_background(df,dirdata,frame,no_bkg=no_bkg)
         div_masked = np.ma.array (div, mask=np.isnan(div))
         if fixed_vlim is not None:
             vmin=fixed_vlim[0];vmax=fixed_vlim[1]
@@ -268,7 +336,7 @@ def plot_frame_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_fiel
     close()
     return div
 
-def plot_frame_mean_vel(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True):
+def plot_mean_vel(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True):
     close('all')
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
@@ -276,18 +344,7 @@ def plot_frame_mean_vel(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot
     if osp.isdir(track_dir)==False:
         os.mkdir(track_dir)
 
-    if plot_field:
-        #import image
-        filename=osp.join(data_dir,'raw/max_intensity_%04d.png'%int(frame))
-        im = io.imread(filename)
-        n,m,d = im.shape
-        fig=figure(frameon=False)
-        fig.set_size_inches(m/300,n/300)
-        ax = fig.add_axes([0, 0, 1, 1])
-        ax.imshow(im,aspect='auto',origin='lower')
-        xmin, ymin, xmax, ymax=ax.axis('off')
-
-    #compute div
+    #compute avg
     x_array=avg_vfield['x'].unique(); y_array=avg_vfield['y'].unique()
     X, Y = np.meshgrid(x_array,y_array)
     mean_vel = zeros((X.shape[0],X.shape[1]))
@@ -299,6 +356,7 @@ def plot_frame_mean_vel(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot
             mean_vel[i,j]=sqrt(vx**2+vy**2+vz**2)
 
     if plot_field:
+    	fig,ax,xmin,ymin,xmax,ymax=get_background(df,dirdata,frame,no_bkg=no_bkg)
         mean_vel_masked = np.ma.array (mean_vel, mask=np.isnan(mean_vel))
         if fixed_vlim is not None:
             vmin=fixed_vlim[0];vmax=fixed_vlim[1]
@@ -316,17 +374,6 @@ def plot_frame_mean_vel(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot
     close()
     return mean_vel
 
-def filter_by_traj_len(df,min_traj_len=1,max_traj_len=None):
-    df2=pd.DataFrame()
-    if max_traj_len is None: #assign the longest possible track
-        max_traj_len=df['frame'].max()-df['frame'].min()+1
-    tracks=df.groupby('traj')
-    for t in df['traj'].unique():
-        track=tracks.get_group(t)
-        if track.shape[0]>=min_traj_len and track.shape[0]<=max_traj_len:
-            df2=pd.concat([df2,track])
-    return df2
-
 def plot_all_frame(plot_func,df,data_dir,parallelize=True,avg_vfields=None,**kwargs):
     groups=df.groupby('frame')
     if parallelize:
@@ -339,55 +386,40 @@ def plot_all_frame(plot_func,df,data_dir,parallelize=True,avg_vfields=None,**kwa
         for frame in df['frame'].unique():
             plot_func(df,groups,frame,data_dir,**kwargs)
 
-def get_avg_vfields(data_dir,df=None,avg_grid=10):
-    refresh=False
-    pickle_fn=osp.join(data_dir,'avg_fields.p')
-    #check pickle exists
-    if osp.exists(pickle_fn)==False:
-        refresh=True
-    if df is not None:
-        refresh=True
+def plot_z_flow(df,frame,z0,grid,plot_field):
+	"""Plot the flow (defined as the net number of cells going through a surface element in the increasing z direction) through the plane of z=z0"""
+    
+    df_layer=df[abs(df['vz'])>=abs(z0-df['z'])] #layer of cells crossing the surface
+    df_ascending=df_layer[((df_layer['vz']>=0) & (df_layer['z']<=z0))] #ascending cells below the surface
+    df_descending=df_layer[((df_layer['vz']<=0) & (df_layer['z']>=z0))] #descending cells above the surface
+    
+    #calculate the intersection coordinates (x0,y0) of the vector and the surface (calculate homothety coefficient alpha)
+    for df_ in [df_ascending,df_descending]:
+        df_['alpha']=(z0-df_['z'])/df_['vz']
+        df_['x0']=df_['x']+df_['alpha']*df_['vx']
+        df_['y0']=df_['y']+df_['alpha']*df_['vy']
         
-    if refresh:
-        avg_vfields={'avg_grid':avg_grid,'frame_list':[],'vfield_list':[]}
-        groups=df.groupby('frame')
-        for frame in df['frame'].unique():
-            avg_vfields['frame_list'].append(frame)
-            avg_vfields['vfield_list'].append(plot_frame_vfield(df,groups,frame,data_dir,avg_grid=avg_grid,plot_field=False))
-        #update pickle
-        pickle.dump(avg_vfields,open(pickle_fn,"wb"))
-    else:
-        avg_vfields=pickle.load(open(pickle_fn,"rb"))
+    X,Y=grid
+    x = zeros((X.shape[0]-1,X.shape[1]-1)); y = zeros((X.shape[0]-1,X.shape[1]-1)); flow = zeros((X.shape[0]-1,X.shape[1]-1))
+    for i in range(X.shape[0]-1):
+        for j in range(X.shape[1]-1):
+            ind_asc=((df_ascending['x0']>=X[i,j]) & (df_ascending['x0']<X[i,j+1]) & (df_ascending['y0']>=Y[i,j]) & (df_ascending['y0']<Y[i+1,j]))
+            ind_des=((df_descending['x0']>=X[i,j]) & (df_descending['x0']<X[i,j+1]) & (df_descending['y0']>=Y[i,j]) & (df_descending['y0']<Y[i+1,j]))
+            x[i,j]=X[i,j]+(X[i,j+1]-X[i,j])*0.5; y[i,j]=Y[i,j]+(Y[i+1,j]-Y[i,j])*0.5
+            flow[i,j]=df_ascending[ind_asc].shape[0]-df_descending[ind_des].shape[0]
     
-    return avg_vfields
-
-def get_data(data_dir,refresh=False,plot_frame=True,plot_data=True,plot_modified_tracks=False,plot_all_traj=False):
-    #import
-    pickle_fn=osp.join(data_dir,"data_base.p")
-    if osp.exists(pickle_fn)==False or refresh:
-		#data=loadtxt(osp.join(data_dir,'test_data.txt'))
-        data=loadtxt(osp.join(data_dir,'table.txt'))
-        info=get_info(data_dir)
-        for inf in ['lengthscale','delta_t','columns']:
-            if info[inf]==-1:
-                print "WARNING: "+inf+" not provided in info.txt"
-        lengthscale=info["lengthscale"];timescale=info["delta_t"];columns=info["columns"]
-        df=pd.DataFrame(data[:,1:],columns=columns) 
-        #scale data
-        scale_dim(df,timescale,lengthscale)
-        compute_parameters(df)
-        #update pickle
-        pickle.dump(df, open( osp.join(data_dir,"data_base.p"), "wb" ) )
-    else:
-        df=pickle.load( open( pickle_fn, "rb" ))
+    if plot_field:
+        fig,ax,xmin,ymin,xmax,ymax=get_background(df,dirdata,frame,no_bkg=no_bkg)
+        vmin=flow.min();vmax=flow.max()
+        cmap=cm.plasma
+        C=ax.pcolormesh(x,y,flow,cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
+        cbaxes = fig.add_axes([0.4, 0.935, 0.025, 0.05])
+        cbar = fig.colorbar(C,cax = cbaxes,label='cell flow $(min^{-1})$')
+        cbaxes.tick_params(labelsize=5,color='w')
+        cbaxes.yaxis.label.set_color('white')
+        ax.axis([xmin, ymin, xmax, ymax])
+        filename=osp.join(track_dir,'flow_%04d.png'%int(frame))
+        fig.savefig(filename, dpi=300)
+    close()
     
-    return df
-
-def get_vlim(plot_func,df,data_dir,avg_vfields,**kwargs):
-    groups=df.groupby('frame')
-    vmin=1000;vmax=-1000
-    for i,frame in enumerate(avg_vfields['frame_list']):
-        data=plot_func(df,groups,frame,data_dir,avg_vfields['vfield_list'][i],plot_field=False,**kwargs)
-        data = np.ma.array (data, mask=np.isnan(data))
-        vmin=min(vmin,data.min());vmax=max(vmax,data.max())
-    return [vmin,vmax]
+    return (x,y,flow)
