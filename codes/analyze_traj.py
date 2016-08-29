@@ -373,7 +373,7 @@ def plot_mean_vel(df,groups,frame,data_dir,grids,fixed_vlim=None,plot_field=True
     close()
     return mean_vel
 
-def plot_z_flow(df,groups,frame,data_dir,z0,grids,plot_field,no_bkg=False):
+def plot_z_flow(df,groups,frame,data_dir,grids,z0,plot_field=True,no_bkg=False):
     """Plot the flow (defined as the net number of cells going through a surface element in the increasing z direction) through the plane of z=z0"""
     
     #Make sure these are 3D data
@@ -435,12 +435,20 @@ def plot_all_frame(plot_func,df,data_dir,parallelize=True,**kwargs):
         for frame in df['frame'].unique():
             plot_func(df,groups,frame,data_dir,**kwargs)
 
-def run_analysis(data_dir,refresh=False,min_traj_len=98,parallelize=True,x_grid_size=10,plot_traj=False,hide_labels=False,no_bkg=False):
+def run_analysis(data_dir,refresh=False,min_traj_len=98,parallelize=True,x_grid_size=10,plot_traj=False,hide_labels=False,no_bkg=False,z0=None):
     df,lengthscale,timescale,columns=get_data(data_dir,refresh=refresh)
     df2=filter_by_traj_len(df,min_traj_len=min_traj_len)
     print "plotting cells trajectories"
     z_lim=[df_['z_rel'].min(),df_['z_rel'].max()]
     plot_all_frame(plot_cells,df2,data_dir,parallelize=parallelize,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg)
     print "plotting velocity fields"
-    grid=make_grid(x_grid_size,lengthscale=lengthscale)
-    plot_all_frame(plot_cells,df2,data_dir,parallelize=parallelize,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg)
+    grids=make_grid(x_grid_size,lengthscale=lengthscale)
+    plot_all_frame(plot_vfield,df,data_dir,parallelize=parallelize,grids=grids,no_bkg=no_bkg)
+    print "plotting divergence"
+    plot_all_frame(plot_div,df,data_dir,parallelize=parallelize,grids=grids,no_bkg=no_bkg)
+    print "plotting mean velocity map"
+    plot_all_frame(plot_mean_vel,df,data_dir,parallelize=parallelize,grids=grids,no_bkg=no_bkg)
+    print "plotting z flow map"
+    if z0 is not None:
+        z0= z_lim[0] + (z_lim[1]-z_lim[0])/2.
+    plot_all_frame(plot_z_flow,df,data_dir,parallelize=parallelize,grids=grids,z0=z0,no_bkg=no_bkg)
