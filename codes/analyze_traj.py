@@ -188,7 +188,7 @@ def make_grid(xres,dimensions=None,lengthscale=None):
 ###########   PLOT METHODS   ####################################
 #################################################################
 
-def plot_cells(df,group,frame,data_dir,plot_traj=False,z_lim=[],filtered_tracks=None,hide_labels=False,no_bkg=False):
+def plot_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],filtered_tracks=None,hide_labels=False,no_bkg=False):
     """ Print the tracked pictures with updated (=relinked) tracks"""
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
@@ -199,7 +199,9 @@ def plot_cells(df,group,frame,data_dir,plot_traj=False,z_lim=[],filtered_tracks=
     if osp.isdir(track_dir)==False:
         os.mkdir(track_dir)
 
-    r,c=group.shape
+    group=groups.get_group(frame).reset_index(drop=True)    
+
+    r,c=groups.shape
     if plot_traj:
         track_groups=df.groupby(['traj'])
     z_labeling=False
@@ -266,7 +268,7 @@ def plot_cells(df,group,frame,data_dir,plot_traj=False,z_lim=[],filtered_tracks=
     fig.savefig(filename, dpi=300)
     close('all')
 
-def plot_vfield(df,group,frame,data_dir,avg_grid=None,filtered_tracks=False,plot_field=True,no_bkg=False):
+def plot_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=False,plot_field=True,no_bkg=False):
     """ Plot velocity field and compute avg vfield on a grid if avg_grid is a int giving the number of square in the X direction"""
     close('all')
     print '\rplotting frame '+str(frame),
@@ -278,6 +280,8 @@ def plot_vfield(df,group,frame,data_dir,avg_grid=None,filtered_tracks=False,plot
         
     if osp.isdir(track_dir)==False:
         os.mkdir(track_dir)
+
+    group=groups.get_group(frame).reset_index(drop=True)
 
     #import image
     fig,ax,xmin,ymin,xmax,ymax=get_background(df,dirdata,frame,no_bkg=no_bkg)
@@ -315,7 +319,7 @@ def plot_vfield(df,group,frame,data_dir,avg_grid=None,filtered_tracks=False,plot
     if avg_grid is not None:
         return avg_vfield
 
-def plot_div(df,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True,no_bkg=False):
+def plot_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True,no_bkg=False):
     """ Plot 2D divergence"""
     close('all')
     print '\rplotting frame '+str(frame),
@@ -357,7 +361,7 @@ def plot_div(df,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True,no_bkg
     close()
     return div
 
-def plot_mean_vel(df,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True,no_bkg=False):
+def plot_mean_vel(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True,no_bkg=False):
     close('all')
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
@@ -395,20 +399,7 @@ def plot_mean_vel(df,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True,n
     close()
     return mean_vel
 
-def plot_all_frame(plot_func,df,data_dir,parallelize=True,avg_vfields=None,**kwargs):
-    groups=df.groupby('frame')
-    if parallelize:
-        num_cores = multiprocessing.cpu_count()
-        if avg_vfields is None:
-            Parallel(n_jobs=num_cores)(delayed(plot_func)(df,groups,frame,data_dir,**kwargs) for frame in df['frame'].unique())
-        else:
-            Parallel(n_jobs=num_cores)(delayed(plot_func)(df,groups,frame,data_dir,avg_vfields['vfield_list'][i],**kwargs) for i,frame in enumerate(avg_vfields['frame_list']))	
-    else:
-        for frame in df['frame'].unique():
-            group=groups.get_group(frame).reset_index(drop=True)
-            plot_func(df,group,frame,data_dir,**kwargs)
-
-def plot_z_flow(df,group,frame,z0,grid,plot_field,no_bkg=False):
+def plot_z_flow(df,groups,frame,data_dir,z0,grid,plot_field,no_bkg=False):
     """Plot the flow (defined as the net number of cells going through a surface element in the increasing z direction) through the plane of z=z0"""
     
     close('all')
@@ -417,6 +408,8 @@ def plot_z_flow(df,group,frame,z0,grid,plot_field,no_bkg=False):
     track_dir=osp.join(data_dir,'z_flow')
     if osp.isdir(track_dir)==False:
         os.mkdir(track_dir)
+
+    group=groups.get_group(frame).reset_index(drop=True)
 
     df_layer=group[abs(group['vz'])>=abs(z0-group['z'])] #layer of cells crossing the surface
     df_ascending=df_layer[((df_layer['vz']>=0) & (df_layer['z']<=z0))] #ascending cells below the surface
@@ -452,3 +445,12 @@ def plot_z_flow(df,group,frame,z0,grid,plot_field,no_bkg=False):
     close()
     
     return (x,y,flow)
+
+def plot_all_frame(plot_func,df,data_dir,parallelize=True,**kwargs):
+    groups=df.groupby('frame')
+    if parallelize:
+        num_cores = multiprocessing.cpu_count()
+        Parallel(n_jobs=num_cores)(delayed(plot_func)(df,groups,frame,data_dir,**kwargs) for frame in df['frame'].unique())
+    else:
+        for frame in df['frame'].unique():
+            plot_func(df,groups,frame,data_dir,**kwargs)
