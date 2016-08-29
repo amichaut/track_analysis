@@ -24,11 +24,11 @@ def get_cmap_color(value, colormap, vmin=None, vmax=None):
     norm = plt.Normalize(vmin, vmax)
     return colormap(norm(value))
 
-def scale_dim(df,timescale,lengthscale):
+def scale_dim(df,dimensions=['x','y','z'],timescale,lengthscale):
     #time
     df['t']=df['frame']*timescale
     #length 
-    for dim in ['x','y','z']:
+    for dim in dimensions:
         df[dim+'_scaled']=df[dim]/lengthscale
         
 def compute_parameters(df):
@@ -106,7 +106,8 @@ def get_data(data_dir,refresh=False,plot_frame=True,plot_data=True,plot_modified
         lengthscale=info["lengthscale"];timescale=info["delta_t"];columns=info["columns"]
         df=pd.DataFrame(data[:,1:],columns=columns) 
         #scale data
-        scale_dim(df,timescale,lengthscale)
+        dimensions=['x','y','z'] if 'z' in columns else =['x','y']
+        scale_dim(df,dimensions,timescale,lengthscale)
         compute_parameters(df)
         #update pickle
         pickle.dump(df, open( osp.join(data_dir,"data_base.p"), "wb" ) )
@@ -187,7 +188,7 @@ def make_grid(xres,dimensions=None,lengthscale=None):
 ###########   PLOT METHODS   ####################################
 #################################################################
 
-def plot_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],filtered_tracks=None,hide_labels=False,no_bkg=False):
+def plot_cells(df,group,frame,data_dir,plot_traj=False,z_lim=[],filtered_tracks=None,hide_labels=False,no_bkg=False):
     """ Print the tracked pictures with updated (=relinked) tracks"""
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
@@ -198,7 +199,6 @@ def plot_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],filtered_tracks
     if osp.isdir(track_dir)==False:
         os.mkdir(track_dir)
 
-    group=groups.get_group(frame).reset_index(drop=True)
     r,c=group.shape
     if plot_traj:
         track_groups=df.groupby(['traj'])
@@ -266,7 +266,7 @@ def plot_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],filtered_tracks
     fig.savefig(filename, dpi=300)
     close('all')
 
-def plot_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=False,plot_field=True,no_bkg=False):
+def plot_vfield(df,group,frame,data_dir,avg_grid=None,filtered_tracks=False,plot_field=True,no_bkg=False):
     """ Plot velocity field and compute avg vfield on a grid if avg_grid is a int giving the number of square in the X direction"""
     close('all')
     print '\rplotting frame '+str(frame),
@@ -278,7 +278,7 @@ def plot_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=False,plo
         
     if osp.isdir(track_dir)==False:
         os.mkdir(track_dir)
-    group=groups.get_group(frame).reset_index(drop=True)
+
     #import image
     fig,ax,xmin,ymin,xmax,ymax=get_background(df,dirdata,frame,no_bkg=no_bkg)
     #plot quiver
@@ -315,7 +315,7 @@ def plot_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=False,plo
     if avg_grid is not None:
         return avg_vfield
 
-def plot_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True,no_bkg=False):
+def plot_div(df,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True,no_bkg=False):
     """ Plot 2D divergence"""
     close('all')
     print '\rplotting frame '+str(frame),
@@ -357,7 +357,7 @@ def plot_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True
     close()
     return div
 
-def plot_mean_vel(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True,no_bkg=False):
+def plot_mean_vel(df,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True,no_bkg=False):
     close('all')
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
@@ -405,9 +405,10 @@ def plot_all_frame(plot_func,df,data_dir,parallelize=True,avg_vfields=None,**kwa
             Parallel(n_jobs=num_cores)(delayed(plot_func)(df,groups,frame,data_dir,avg_vfields['vfield_list'][i],**kwargs) for i,frame in enumerate(avg_vfields['frame_list']))	
     else:
         for frame in df['frame'].unique():
-            plot_func(df,groups,frame,data_dir,**kwargs)
+            group=groups.get_group(frame).reset_index(drop=True)
+            plot_func(df,group,frame,data_dir,**kwargs)
 
-def plot_z_flow(df,frame,z0,grid,plot_field,no_bkg=False):
+def plot_z_flow(df,group,frame,z0,grid,plot_field,no_bkg=False):
     """Plot the flow (defined as the net number of cells going through a surface element in the increasing z direction) through the plane of z=z0"""
     
     close('all')
@@ -417,7 +418,7 @@ def plot_z_flow(df,frame,z0,grid,plot_field,no_bkg=False):
     if osp.isdir(track_dir)==False:
         os.mkdir(track_dir)
 
-    df_layer=df[abs(df['vz'])>=abs(z0-df['z'])] #layer of cells crossing the surface
+    df_layer=group[abs(group['vz'])>=abs(z0-group['z'])] #layer of cells crossing the surface
     df_ascending=df_layer[((df_layer['vz']>=0) & (df_layer['z']<=z0))] #ascending cells below the surface
     df_descending=df_layer[((df_layer['vz']<=0) & (df_layer['z']>=z0))] #descending cells above the surface
     
