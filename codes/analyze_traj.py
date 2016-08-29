@@ -24,7 +24,7 @@ def get_cmap_color(value, colormap, vmin=None, vmax=None):
     norm = plt.Normalize(vmin, vmax)
     return colormap(norm(value))
 
-def scale_dim(df,dimensions=['x','y','z'],timescale,lengthscale):
+def scale_dim(df,dimensions=['x','y','z'],timescale=1.,lengthscale=1.):
     #time
     df['t']=df['frame']*timescale
     #length 
@@ -71,7 +71,7 @@ def get_info(dirdata):
         print "ERROR: info.txt doesn't exist or is not at the right place"
     return info
 
-def get_avg_vfields(data_dir,df=None,avg_grid=10):
+def get_avg_vfields(data_dir,grids,df=None):
     refresh=False
     pickle_fn=osp.join(data_dir,'avg_fields.p')
     #check pickle exists
@@ -85,7 +85,7 @@ def get_avg_vfields(data_dir,df=None,avg_grid=10):
         groups=df.groupby('frame')
         for frame in df['frame'].unique():
             avg_vfields['frame_list'].append(frame)
-            avg_vfields['vfield_list'].append(plot_vfield(df,groups,frame,data_dir,avg_grid=avg_grid,plot_field=False))
+            avg_vfields['vfield_list'].append(plot_vfield(df,groups,frame,data_dir,grids=grids,plot_field=False))
         #update pickle
         pickle.dump(avg_vfields,open(pickle_fn,"wb"))
     else:
@@ -106,7 +106,7 @@ def get_data(data_dir,refresh=False,plot_frame=True,plot_data=True,plot_modified
         lengthscale=info["lengthscale"];timescale=info["delta_t"];columns=info["columns"]
         df=pd.DataFrame(data[:,1:],columns=columns) 
         #scale data
-        dimensions=['x','y','z'] if 'z' in columns else =['x','y']
+        dimensions=['x','y','z'] if 'z' in columns else ['x','y']
         scale_dim(df,dimensions,timescale,lengthscale)
         compute_parameters(df)
         #update pickle
@@ -114,7 +114,7 @@ def get_data(data_dir,refresh=False,plot_frame=True,plot_data=True,plot_modified
     else:
         df=pickle.load( open( pickle_fn, "rb" ))
     
-    return df
+    return df,lengthscale,timescale,columns
 
 def get_vlim(plot_func,df,data_dir,avg_vfields,**kwargs):
     groups=df.groupby('frame')
@@ -163,8 +163,8 @@ def get_background(df,dirdata,frame,no_bkg=False):
     xmin, ymin, xmax, ymax=ax.axis('off')
     return fig,ax,xmin,ymin,xmax,ymax
 
-def make_grid(xres,dimensions=None,lengthscale=None):
-    """make a meshgrid. The boundaries can be passed by dimensions as [xmin,xmax,ymin,ymax] or using the raw image dimensions. xres is the number of cells in the grid along the x axis.
+def make_grid(x_grid_size,dimensions=None,lengthscale=None):
+    """make a meshgrid. The boundaries can be passed by dimensions as [xmin,xmax,ymin,ymax] or using the raw image dimensions. x_grid_size is the number of cells in the grid along the x axis.
 	It returns two grids: the node_grid with the positions of the nodes of each cells, and the center_grid with the position of the center of each cell"""
     if dimensions is None:
         if not osp.exists(osp.join(data_dir,'raw')):
@@ -179,7 +179,7 @@ def make_grid(xres,dimensions=None,lengthscale=None):
     else:
         [xmin,xmax,ymin,ymax] = dimensions
 
-    step=float(xmax-xmin)/xres
+    step=float(xmax-xmin)/x_grid_size
     node_grid=meshgrid(arange(xmin,xmax+step,step),arange(ymin,ymax+step,step))
     center_grid=meshgrid(arange(xmin+step/2,xmax,step),arange(ymin+step/2,ymax,step))
     return node_grid,center_grid
@@ -188,14 +188,12 @@ def make_grid(xres,dimensions=None,lengthscale=None):
 ###########   PLOT METHODS   ####################################
 #################################################################
 
-def plot_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],filtered_tracks=None,hide_labels=False,no_bkg=False):
+def plot_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False):
     """ Print the tracked pictures with updated (=relinked) tracks"""
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
-    if filtered_tracks is None:
-        track_dir=osp.join(data_dir,'traj')
-    else:
-        track_dir=osp.join(data_dir,'traj_subset')
+    
+    track_dir=osp.join(data_dir,'traj')
     if osp.isdir(track_dir)==False:
         os.mkdir(track_dir)
 
@@ -216,49 +214,27 @@ def plot_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],filtered_tracks
 
     #import image
     fig,ax,xmin,ymin,xmax,ymax=get_background(df,dirdata,frame,no_bkg=no_bkg)
-    if filtered_tracks is None:
-        for i in range(0,r):
-            #write label
-            x=group.loc[i,'x']
-            y=group.loc[i,'y']
-            track=int(group.loc[i,'traj'])
-            s='%d'%(track)
-            if hide_labels is False:
-                ax.text(x,y,s,fontsize=5,color='w')
-            if plot_traj:
-                #plot trajectory
-                traj=get_obj_traj(track_groups,track,max_frame=frame)
-                traj_length,c=traj.shape
-                if traj_length>1:
-                    if z_labeling:
-                        X=traj['x'].values;Y=traj['y'].values;Z=traj['z_rel'].values; #convert to numpy to optimize speed
-                        for j in range(1,traj_length):
-                            ax.plot([X[j-1],X[j]],[Y[j-1],Y[j]],color=get_cmap_color(Z[j],cm.plasma, vmin=z_lim[0], vmax=z_lim[1]))
-                    else:
-                        ax.plot(traj['x'],traj['y'],ls='-',color=color_list[track%7])
-                    ax.axis([xmin, ymin, xmax, ymax])
+    for i in range(0,r):
+        #write label
+        x=group.loc[i,'x']
+        y=group.loc[i,'y']
+        track=int(group.loc[i,'traj'])
+        s='%d'%(track)
+        if hide_labels is False:
+            ax.text(x,y,s,fontsize=5,color='w')
+        if plot_traj:
+            #plot trajectory
+            traj=get_obj_traj(track_groups,track,max_frame=frame)
+            traj_length,c=traj.shape
+            if traj_length>1:
+                if z_labeling:
+                    X=traj['x'].values;Y=traj['y'].values;Z=traj['z_rel'].values; #convert to numpy to optimize speed
+                    for j in range(1,traj_length):
+                        ax.plot([X[j-1],X[j]],[Y[j-1],Y[j]],color=get_cmap_color(Z[j],cm.plasma, vmin=z_lim[0], vmax=z_lim[1]))
+                else:
+                    ax.plot(traj['x'],traj['y'],ls='-',color=color_list[track%7])
+                ax.axis([xmin, ymin, xmax, ymax])
 
-    else:
-        for i,track in enumerate(filtered_tracks):
-            if (group['traj']==track).any():
-                #write label
-                x=group[group['traj']==track]['x'].values[0]
-                y=group[group['traj']==track]['y'].values[0]
-                s='%d'%track
-                if hide_labels is False:
-                    ax.text(x,y,s,fontsize=5,color='w')
-                if plot_traj:
-                    #plot trajectory
-                    traj=get_obj_traj(track_groups,track,max_frame=frame)
-                    traj_length,c=traj.shape
-                    if traj_length>1:
-                        if z_labeling:
-                            X=traj['x'].values;Y=traj['y'].values;Z=traj['z_rel'].values; #convert to numpy to optimize speed
-                            for j in range(1,traj_length):
-                                ax.plot([X[j-1],X[j]],[Y[j-1],Y[j]],color=get_cmap_color(Z[j],cm.plasma, vmin=z_lim[0], vmax=z_lim[1]))
-                        else:
-                            ax.plot(traj['x'],traj['y'],ls='-',color=color_list[track%7])
-                    ax.axis([xmin, ymin, xmax, ymax])
     if z_labeling:
         cbaxes = fig.add_axes([0.4, 0.935, 0.025, 0.05])
         cbar = fig.colorbar(cont,cax = cbaxes,label='$z\ (\mu m)$')
@@ -268,58 +244,52 @@ def plot_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],filtered_tracks
     fig.savefig(filename, dpi=300)
     close('all')
 
-def plot_vfield(df,groups,frame,data_dir,avg_grid=None,filtered_tracks=False,plot_field=True,no_bkg=False):
+def plot_vfield(df,groups,frame,data_dir,grids=None,plot_field=True,no_bkg=False):
     """ Plot velocity field and compute avg vfield on a grid if avg_grid is a int giving the number of square in the X direction"""
     close('all')
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
-    if filtered_tracks:
-        track_dir=osp.join(data_dir,'vfield_subset')
-    else:
-        track_dir=osp.join(data_dir,'vfield')
-        
+    track_dir=osp.join(data_dir,'vfield')
     if osp.isdir(track_dir)==False:
         os.mkdir(track_dir)
 
+    dim=2 if 'z' not in df.columns else 3 #2d or 3D
+    coord_list=['vx','vy','vz']
+        
     group=groups.get_group(frame).reset_index(drop=True)
 
     #import image
     fig,ax,xmin,ymin,xmax,ymax=get_background(df,dirdata,frame,no_bkg=no_bkg)
     #plot quiver
     if avg_grid is not None:
-        if avg_grid<1:
-            print "ERROR: avg_grid <1"
-            return
-        res = avg_grid+1 #number of bounds = nmuber of cells + 1
-        xsubgrid=linspace(xmin,ymin,res)
-        cell_size = xsubgrid[1]-xsubgrid[0]
-        ysubgrid=arange(xmax,ymax,cell_size)
-        X=[];Y=[];VX=[];VY=[];VZ=[] #new data
-        for i,xg in enumerate(xsubgrid[:-1]):
-            for j,yg in enumerate(ysubgrid[:-1]):
-                xg1=xsubgrid[i+1];yg1=ysubgrid[j+1]
-                ind=((group['x']>=xg) & (group['x']<xg1) & (group['y']>=yg) & (group['y']<yg1))
-                VX.append(group[ind]['vx'].mean());VY.append(group[ind]['vy'].mean());VZ.append(group[ind]['vz'].mean())
-                X.append(xg+(xg1-xg)*0.5);Y.append(yg+(yg1-yg)*0.5) #center of the cell
-        
-        avg_vfield = pd.DataFrame({'x':X,'y':Y,'vx':VX,'vy':VY,'vz':VZ})
-        Q=quiver(avg_vfield['x'],avg_vfield['y'],avg_vfield['vx'],avg_vfield['vy'],avg_vfield['vz'],units='x',cmap='plasma')
+        node_grid,center_grid=grids   
+        X,Y=node_grid
+        x,y=center_grid
+        v_field=[zeros((x.shape[0],x.shape[1])) for _ in range(dim)]
+        for i in range(x.shape[0]):
+            for j in range(x.shape[1]):
+                ind_asc=((group['x']>=X[i,j]) & (group['x']<X[i,j+1]) & (group['y']>=Y[i,j]) & (group['y']<Y[i+1,j]))
+                for k in range(dim):
+                    v_field[k][i,j]=group[ind][coord_list[k]].mean()
+        Q=quiver(x,y,*v_field,units='x',cmap='plasma')
     else:
-        Q=quiver(group['x'],group['y'],group['vx'],group['vy'],group['vz'],units='x',cmap='plasma')
+        v_field=[group[coord_list[k]] for k in range(dim)]
+        Q=quiver(group['x'],group['y'],*v_field,units='x',cmap='plasma')
 
     if plot_field:
-        cbaxes = fig.add_axes([0.4, 0.935, 0.025, 0.05])
-        cbar = fig.colorbar(Q,cax = cbaxes,label='$v_z\ (\mu m.min^{-1})$')
-        cbaxes.tick_params(labelsize=5,color='w')
-        cbaxes.yaxis.label.set_color('white')
+        if dim==3:
+            cbaxes = fig.add_axes([0.4, 0.935, 0.025, 0.05])
+            cbar = fig.colorbar(Q,cax = cbaxes,label='$v_z\ (\mu m.min^{-1})$')
+            cbaxes.tick_params(labelsize=5,color='w')
+            cbaxes.yaxis.label.set_color('white')
         ax.axis([xmin, ymin, xmax, ymax])
         filename=osp.join(track_dir,'vfield_%04d.png'%int(frame)) if avg_grid is None else osp.join(track_dir,'avg_vfield_%04d.png'%int(frame))
         fig.savefig(filename, dpi=600)
     close()
     if avg_grid is not None:
-        return avg_vfield
+        return v_field
 
-def plot_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True,no_bkg=False):
+def plot_div(df,groups,frame,data_dir,grids,fixed_vlim=None,plot_field=True,no_bkg=False):
     """ Plot 2D divergence"""
     close('all')
     print '\rplotting frame '+str(frame),
@@ -328,19 +298,21 @@ def plot_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True
     if osp.isdir(track_dir)==False:
         os.mkdir(track_dir)
 
+    #get avg_vfield
+    avg_vfields=get_avg_vfields(data_dir,grids,df)
+    ind=avg_vfields['frame_list'].index(frame)
+    avg_vfield=avg_vfields['vfield_list'][ind]
+
     #compute div
-    x_array=avg_vfield['x'].unique(); y_array=avg_vfield['y'].unique()
-    X, Y = np.meshgrid(x_array,y_array)
-    div = zeros((X.shape[0],X.shape[1]))
+    node_grid,center_grid=grids
+    x,y=center_grid
+    div = zeros((x.shape[0],x.shape[1]))
+    vx=avg_vfield[0];vy=avg_vfield[1]
     for i in range(1,X.shape[0]-1):
         for j in range(1,X.shape[1]-1):
-            dy=Y[i,j]-Y[i-1,j]; dx=X[i,j]-X[i,j-1]
-            vx1=avg_vfield[((avg_vfield['x']==X[i,j+1]) & (avg_vfield['y']==Y[i,j+1]))]['vx'].values[0]
-            vx_1=avg_vfield[((avg_vfield['x']==X[i,j-1]) & (avg_vfield['y']==Y[i,j-1]))]['vx'].values[0]
-            vy1=avg_vfield[((avg_vfield['x']==X[i+1,j]) & (avg_vfield['y']==Y[i+1,j]))]['vy'].values[0]
-            vy_1=avg_vfield[((avg_vfield['x']==X[i-1,j]) & (avg_vfield['y']==Y[i-1,j]))]['vy'].values[0]
-            Dvx=(vx1-vx_1)/(2*dx);Dvy=(vy1-vy_1)/(2*dy)
-            div[i-1,j-1]=Dvx+Dvy
+            dy=y[i,j]-y[i-1,j]; dx=x[i,j]-x[i,j-1]
+            Dvx=(vx[i,j+1]-vx[i,j-1])/(2*dx);Dvy=(vy[i+1,j]-vy[i-1,j])/(2*dy)
+            div[i,j]=Dvx+Dvy
 
     if plot_field:
         fig,ax,xmin,ymin,xmax,ymax=get_background(df,dirdata,frame,no_bkg=no_bkg)
@@ -350,7 +322,7 @@ def plot_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True
         else:
             vmin=div_masked.min();vmax=div_masked.max()
         cmap=cm.plasma; cmap.set_bad('w',alpha=0) #set NAN transparent
-        C=ax.pcolormesh(X[1:-1,1:-1],Y[1:-1,1:-1],div_masked[1:-1,1:-1],cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
+        C=ax.pcolormesh(x[1:-1,1:-1],y[1:-1,1:-1],div_masked[1:-1,1:-1],cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
         cbaxes = fig.add_axes([0.4, 0.935, 0.025, 0.05])
         cbar = fig.colorbar(C,cax = cbaxes,label='$div(\overrightarrow{v})\ (min^{-1})$')
         cbaxes.tick_params(labelsize=5,color='w')
@@ -361,7 +333,7 @@ def plot_div(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True
     close()
     return div
 
-def plot_mean_vel(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field=True,no_bkg=False):
+def plot_mean_vel(df,groups,frame,data_dir,grids,fixed_vlim=None,plot_field=True,no_bkg=False):
     close('all')
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
@@ -369,16 +341,18 @@ def plot_mean_vel(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field
     if osp.isdir(track_dir)==False:
         os.mkdir(track_dir)
 
+    #get avg_vfield
+    avg_vfields=get_avg_vfields(data_dir,grids,df)
+    ind=avg_vfields['frame_list'].index(frame)
+    avg_vfield=avg_vfields['vfield_list'][ind]
+
+    dim=2 if 'z' not in df.columns else 3 #2d or 3D
+
     #compute avg
-    x_array=avg_vfield['x'].unique(); y_array=avg_vfield['y'].unique()
-    X, Y = np.meshgrid(x_array,y_array)
-    mean_vel = zeros((X.shape[0],X.shape[1]))
-    for i in range(0,X.shape[0]):
-        for j in range(0,X.shape[1]):
-            vx=avg_vfield[((avg_vfield['x']==X[i,j]) & (avg_vfield['y']==Y[i,j]))]['vx'].values[0]
-            vy=avg_vfield[((avg_vfield['x']==X[i,j]) & (avg_vfield['y']==Y[i,j]))]['vy'].values[0]
-            vz=avg_vfield[((avg_vfield['x']==X[i,j]) & (avg_vfield['y']==Y[i,j]))]['vz'].values[0]
-            mean_vel[i,j]=sqrt(vx**2+vy**2+vz**2)
+    V=0
+    for k in range(dim):
+        V+=avg_vfield[k]**2
+    mean_vel=sqrt(V)
 
     if plot_field:
     	fig,ax,xmin,ymin,xmax,ymax=get_background(df,dirdata,frame,no_bkg=no_bkg)
@@ -399,9 +373,14 @@ def plot_mean_vel(df,groups,frame,data_dir,avg_vfield,fixed_vlim=None,plot_field
     close()
     return mean_vel
 
-def plot_z_flow(df,groups,frame,data_dir,z0,grid,plot_field,no_bkg=False):
+def plot_z_flow(df,groups,frame,data_dir,z0,grids,plot_field,no_bkg=False):
     """Plot the flow (defined as the net number of cells going through a surface element in the increasing z direction) through the plane of z=z0"""
     
+    #Make sure these are 3D data
+    if 'z' not in df.columns:
+        print "Not a 3D set of data"
+        return
+
     close('all')
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
@@ -420,14 +399,15 @@ def plot_z_flow(df,groups,frame,data_dir,z0,grid,plot_field,no_bkg=False):
         df_['alpha']=(z0-df_['z'])/df_['vz']
         df_['x0']=df_['x']+df_['alpha']*df_['vx']
         df_['y0']=df_['y']+df_['alpha']*df_['vy']
-        
-    X,Y=grid
-    x = zeros((X.shape[0]-1,X.shape[1]-1)); y = zeros((X.shape[0]-1,X.shape[1]-1)); flow = zeros((X.shape[0]-1,X.shape[1]-1))
-    for i in range(X.shape[0]-1):
-        for j in range(X.shape[1]-1):
+    
+    node_grid,center_grid=grids   
+    X,Y=node_grid
+    x,y=center_grid
+    flow = zeros((x.shape[0],x.shape[1]))
+    for i in range(x.shape[0]):
+        for j in range(x.shape[1]):
             ind_asc=((df_ascending['x0']>=X[i,j]) & (df_ascending['x0']<X[i,j+1]) & (df_ascending['y0']>=Y[i,j]) & (df_ascending['y0']<Y[i+1,j]))
             ind_des=((df_descending['x0']>=X[i,j]) & (df_descending['x0']<X[i,j+1]) & (df_descending['y0']>=Y[i,j]) & (df_descending['y0']<Y[i+1,j]))
-            x[i,j]=X[i,j]+(X[i,j+1]-X[i,j])*0.5; y[i,j]=Y[i,j]+(Y[i+1,j]-Y[i,j])*0.5
             flow[i,j]=df_ascending[ind_asc].shape[0]-df_descending[ind_des].shape[0]
     
     if plot_field:
@@ -444,7 +424,7 @@ def plot_z_flow(df,groups,frame,data_dir,z0,grid,plot_field,no_bkg=False):
         fig.savefig(filename, dpi=300)
     close()
     
-    return (x,y,flow)
+    return flow
 
 def plot_all_frame(plot_func,df,data_dir,parallelize=True,**kwargs):
     groups=df.groupby('frame')
@@ -454,3 +434,13 @@ def plot_all_frame(plot_func,df,data_dir,parallelize=True,**kwargs):
     else:
         for frame in df['frame'].unique():
             plot_func(df,groups,frame,data_dir,**kwargs)
+
+def run_analysis(data_dir,refresh=False,min_traj_len=98,parallelize=True,x_grid_size=10,plot_traj=False,hide_labels=False,no_bkg=False):
+    df,lengthscale,timescale,columns=get_data(data_dir,refresh=refresh)
+    df2=filter_by_traj_len(df,min_traj_len=min_traj_len)
+    print "plotting cells trajectories"
+    z_lim=[df_['z_rel'].min(),df_['z_rel'].max()]
+    plot_all_frame(plot_cells,df2,data_dir,parallelize=parallelize,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg)
+    print "plotting velocity fields"
+    grid=make_grid(x_grid_size,lengthscale=lengthscale)
+    plot_all_frame(plot_cells,df2,data_dir,parallelize=parallelize,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg)
