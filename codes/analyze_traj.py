@@ -440,14 +440,14 @@ def plot_all_frame(plot_func,df,data_dir,parallelize=True,**kwargs):
         for frame in df['frame'].unique():
             plot_func(df,groups,frame,data_dir,**kwargs)
 
-def run_analysis(data_dir,refresh=False,min_traj_len=98,parallelize=True,x_grid_size=10,plot_traj=False,hide_labels=False,no_bkg=False,z0=None):
+def run_analysis(data_dir,refresh=False,min_traj_len=98,parallelize=True,x_grid_size=10,plot_traj=True,hide_labels=True,no_bkg=False,z0=None,dimensions=None):
     df,lengthscale,timescale,columns=get_data(data_dir,refresh=refresh)
     df2=filter_by_traj_len(df,min_traj_len=min_traj_len)
     print "plotting cells trajectories"
     z_lim=[df['z_rel'].min(),df['z_rel'].max()]
-    # plot_all_frame(plot_cells,df2,data_dir,parallelize=parallelize,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg)
+    plot_all_frame(plot_cells,df2,data_dir,parallelize=parallelize,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg)
     print "plotting velocity fields"
-    grids=make_grid(x_grid_size,data_dir)
+    grids=make_grid(x_grid_size,data_dir,dimensions=dimensions)
     plot_all_frame(plot_vfield,df,data_dir,parallelize=parallelize,grids=grids,no_bkg=no_bkg)
     print "plotting divergence"
     plot_all_frame(plot_div,df,data_dir,parallelize=parallelize,grids=grids,lengthscale=lengthscale,no_bkg=no_bkg)
