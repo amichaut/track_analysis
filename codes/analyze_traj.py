@@ -71,23 +71,18 @@ def get_info(data_dir):
         print "ERROR: info.txt doesn't exist or is not at the right place"
     return info
 
-def get_avg_vfields(data_dir,grids,df=None):
+def get_avg_vfields(df,data_dir,grids=None,refresh=False):
     refresh=False
     pickle_fn=osp.join(data_dir,'avg_fields.p')
     #check pickle exists
     if osp.exists(pickle_fn)==False:
         refresh=True
-    if df is not None:
-        refresh=True
         
     if refresh:
-        avg_vfields={'grid':grids[1],'frame_list':[],'vfield_list':[]}
-        groups=df.groupby('frame')
-        for frame in df['frame'].unique():
-            avg_vfields['frame_list'].append(frame)
-            avg_vfields['vfield_list'].append(plot_vfield(df,groups,frame,data_dir,grids=grids,plot_field=False))
-        #update pickle
-        pickle.dump(avg_vfields,open(pickle_fn,"wb"))
+        if grids is None:
+            print "ERROR: provide a grid to calculate field"
+            return
+        plot_all_frame(plot_vfield,df,data_dir,parallelize=True,grids=grids,plot_field=False)
     else:
         avg_vfields=pickle.load(open(pickle_fn,"rb"))
     
@@ -288,8 +283,16 @@ def plot_vfield(df,groups,frame,data_dir,grids=None,plot_field=True,no_bkg=False
         filename=osp.join(track_dir,'vfield_%04d.png'%int(frame)) if grids is None else osp.join(track_dir,'avg_vfield_%04d.png'%int(frame))
         fig.savefig(filename, dpi=600)
     close()
-    if grids is not None:
-        return v_field
+    
+    #save data in pickle
+    pickle_fn=osp.join(data_dir,'avg_fields.p')
+    if osp.exists(pickle_fn)==False:
+        data={str(frame):v_field}
+        pickle.dump(data,open(pickle_fn,"wb"))
+    else:
+        data=pickle.load(open(pickle_fn,"rb"))
+        data[str(frame)]=v_field
+        pickle.dump(data,open(pickle_fn,"wb"))
 
 def plot_div(df,groups,frame,data_dir,grids,lengthscale,fixed_vlim=None,plot_field=True,no_bkg=False):
     """ Plot 2D divergence"""
@@ -301,9 +304,8 @@ def plot_div(df,groups,frame,data_dir,grids,lengthscale,fixed_vlim=None,plot_fie
         os.mkdir(track_dir)
 
     #get avg_vfield
-    avg_vfields=get_avg_vfields(data_dir,grids)
-    ind=avg_vfields['frame_list'].index(frame)
-    avg_vfield=avg_vfields['vfield_list'][ind]
+    avg_vfields=get_avg_vfields(df,data_dir)
+    avg_vfield=avg_vfields[str(frame)]
 
     #compute div
     node_grid,center_grid=grids
@@ -344,9 +346,8 @@ def plot_mean_vel(df,groups,frame,data_dir,grids,fixed_vlim=None,plot_field=True
         os.mkdir(track_dir)
 
     #get avg_vfield
-    avg_vfields=get_avg_vfields(data_dir,grids)
-    ind=avg_vfields['frame_list'].index(frame)
-    avg_vfield=avg_vfields['vfield_list'][ind]
+    avg_vfields=get_avg_vfields(df,data_dir)
+    avg_vfield=avg_vfields[str(frame)]
 
     dim=2 if 'z' not in df.columns else 3 #2d or 3D
 
