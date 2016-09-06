@@ -9,6 +9,6 @@ This codes provides different functions to analyze tracking data of cells over t
 * (optional) a 'raw' directory containing the pictures of the movie. Only 'png' format and labeled with a four-digit number starting at 0 (ie. as 0000.png for the first one)
 
 ### How do I run the code ###
-* Open 'analyze_traj.py' in a IPython terminal
+* Open 'analyze_traj.py' in a IPython terminal: open terminal and run the command: %run <path_to_analyze_traj.py> (you can just drag and drop the file on the terminal after %run )
 * run the command: run_analysis(data_dir) with data_dir being the path of the data directory.
 The main argument to pass are: min_traj_len (the minimum length you want for plotting the trajectories), x_grid_size (the number of column in the grid), z0 (the plan defining the z flow)
