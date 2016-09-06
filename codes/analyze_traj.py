@@ -150,7 +150,7 @@ def get_background(df,data_dir,frame,no_bkg=False):
     else:
         filename=osp.join(data_dir,'raw/%04d.png'%int(frame))
         im = io.imread(filename)
-        n,m,d = im.shape
+        n=im.shape[0]; m=im.shape[1]
     fig=figure(frameon=False)
     fig.set_size_inches(m/300,n/300)
     ax = fig.add_axes([0, 0, 1, 1])
@@ -171,7 +171,7 @@ def make_grid(x_grid_size,data_dir,dimensions=None):
             return
         else:
             im = io.imread(osp.join(raw_dir,os.listdir(raw_dir)[0]))
-            ymax,xmax,d = im.shape
+            ymax = im.shape[0]; xmax = im.shape[1]
             xmin=0;ymin=0
     else:
         [xmin,xmax,ymin,ymax] = dimensions
@@ -445,7 +445,7 @@ def run_analysis(data_dir,refresh=False,min_traj_len=98,parallelize=True,x_grid_
     df2=filter_by_traj_len(df,min_traj_len=min_traj_len)
     print "plotting cells trajectories"
     z_lim=[df['z_rel'].min(),df['z_rel'].max()]
-    plot_all_frame(plot_cells,df2,data_dir,parallelize=parallelize,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg)
+    # plot_all_frame(plot_cells,df2,data_dir,parallelize=parallelize,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg)
     print "plotting velocity fields"
     grids=make_grid(x_grid_size,data_dir,dimensions=dimensions)
     plot_all_frame(plot_vfield,df,data_dir,parallelize=parallelize,grids=grids,no_bkg=no_bkg)
