@@ -227,9 +227,11 @@ def plot_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=Fal
                 if z_labeling:
                     X=traj['x'].values;Y=traj['y'].values;Z=traj['z_rel'].values; #convert to numpy to optimize speed
                     for j in range(1,traj_length):
-                        ax.plot([X[j-1],X[j]],[Y[j-1],Y[j]],color=get_cmap_color(Z[j],cm.plasma, vmin=z_lim[0], vmax=z_lim[1]))
+                        ax.plot([X[j-1],X[j]],[Y[j-1],Y[j]],ls='-',color=get_cmap_color(Z[j],cm.plasma,vmin=z_lim[0],vmax=z_lim[1]))
+                    ax.plot(X[traj_length-1],Y[traj_length-1],marker='.',color=get_cmap_color(Z[j],cm.plasma,vmin=z_lim[0],vmax=z_lim[1]))
                 else:
                     ax.plot(traj['x'],traj['y'],ls='-',color=color_list[track%7])
+                    ax.plot(traj['x'].values[-1],traj['y'].values[-1],marker='.',color=color_list[track%7])
                 ax.axis([xmin, ymin, xmax, ymax])
 
     if z_labeling:
@@ -440,12 +442,19 @@ def plot_all_frame(plot_func,df,data_dir,parallelize=True,**kwargs):
         for frame in df['frame'].unique():
             plot_func(df,groups,frame,data_dir,**kwargs)
 
-def run_analysis(data_dir,refresh=False,min_traj_len=98,parallelize=True,x_grid_size=10,plot_traj=True,hide_labels=True,no_bkg=False,z0=None,dimensions=None):
+#################################################################
+###########   CONTAINER METHODS   ###############################
+#################################################################
+
+def cell_analysis(data_dir,refresh=False,min_traj_len=24,parallelize=False,x_grid_size=10,plot_traj=True,hide_labels=True,no_bkg=False,z0=None,dimensions=None):
     df,lengthscale,timescale,columns=get_data(data_dir,refresh=refresh)
     df2=filter_by_traj_len(df,min_traj_len=min_traj_len)
     print "plotting cells trajectories"
     z_lim=[df['z_rel'].min(),df['z_rel'].max()]
-    # plot_all_frame(plot_cells,df2,data_dir,parallelize=parallelize,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg)
+    plot_all_frame(plot_cells,df2,data_dir,parallelize=parallelize,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg)
+
+def map_analysis(data_dir,refresh=False,min_traj_len=24,parallelize=False,x_grid_size=10,plot_traj=True,hide_labels=True,no_bkg=False,z0=None,dimensions=None):
+    df,lengthscale,timescale,columns=get_data(data_dir,refresh=refresh)
     print "plotting velocity fields"
     grids=make_grid(x_grid_size,data_dir,dimensions=dimensions)
     plot_all_frame(plot_vfield,df,data_dir,parallelize=parallelize,grids=grids,no_bkg=no_bkg)
@@ -457,3 +466,4 @@ def run_analysis(data_dir,refresh=False,min_traj_len=98,parallelize=True,x_grid_
     if z0 is None:
         z0= z_lim[0] + (z_lim[1]-z_lim[0])/2.
     plot_all_frame(plot_z_flow,df,data_dir,parallelize=parallelize,grids=grids,z0=z0,no_bkg=no_bkg)
+
