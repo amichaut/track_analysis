@@ -185,6 +185,18 @@ def make_grid(x_grid_size,data_dir,dimensions=None):
 ###########   PLOT METHODS   ####################################
 #################################################################
 
+def plot_cmap(plot_dir,label,cmap,vmin,vmax):
+    close('all')
+    fig = figure(figsize=(8,3))
+    ax = fig.add_axes([0.05,0.80,0.9,0.15])
+    norm = plt.Normalize(vmin=vmin, vmax=vmax)
+    cb = mpl.colorbar.ColorbarBase(ax, cmap=cmap,norm=norm,orientation='horizontal')
+    ax.tick_params(labelsize=16)
+    cb.set_label(label=label,size=24)
+    filename=osp.join(plot_dir,'colormap.png')
+    fig.savefig(filename, dpi=300)
+    close('all')
+
 def plot_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False):
     """ Print the tracked pictures with updated (=relinked) tracks"""
     print '\rplotting frame '+str(frame),
