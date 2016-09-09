@@ -71,23 +71,6 @@ def get_info(data_dir):
         print "ERROR: info.txt doesn't exist or is not at the right place"
     return info
 
-def get_avg_vfields(df,data_dir,grids=None,refresh=False):
-    refresh=False
-    pickle_fn=osp.join(data_dir,'avg_fields.p')
-    #check pickle exists
-    if osp.exists(pickle_fn)==False:
-        refresh=True
-        
-    if refresh:
-        if grids is None:
-            print "ERROR: provide a grid to calculate field"
-            return
-        plot_all_frame(plot_vfield,df,data_dir,parallelize=True,grids=grids,plot_field=False)
-    else:
-        avg_vfields=pickle.load(open(pickle_fn,"rb"))
-    
-    return avg_vfields
-
 def get_data(data_dir,refresh=False,plot_frame=True,plot_data=True,plot_modified_tracks=False,plot_all_traj=False):
     #import
     pickle_fn=osp.join(data_dir,"data_base.p")
@@ -181,6 +164,79 @@ def make_grid(x_grid_size,data_dir,dimensions=None):
     center_grid=meshgrid(arange(xmin+step/2,xmax,step),arange(ymin+step/2,ymax,step))
     return node_grid,center_grid
 
+def compute_vfield(df,groups,frame,data_dir,grids=None):
+    print '\rcomputing velocity field '+str(frame),
+    sys.stdout.flush()
+    plot_dir=osp.join(data_dir,'vfield')
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
+
+    dim=2 if 'z' not in df.columns else 3 #2d or 3D
+    coord_list=['vx','vy','vz']
+        
+    group=groups.get_group(frame).reset_index(drop=True)
+
+    if grids is not None:
+        node_grid,center_grid=grids   
+        X,Y=node_grid
+        x,y=center_grid
+        v_field=[zeros((x.shape[0],x.shape[1])) for _ in range(dim)]
+        for i in range(x.shape[0]):
+            for j in range(x.shape[1]):
+                ind=((group['x']>=X[i,j]) & (group['x']<X[i,j+1]) & (group['y']>=Y[i,j]) & (group['y']<Y[i+1,j]))
+                for k in range(dim):
+                    v_field[k][i,j]=group[ind][coord_list[k]].mean()
+    else:
+        v_field=[group[coord_list[k]] for k in range(dim)]
+        x=group['x'].values;y=group['y'].values
+
+    #save data in pickle
+    data=[x,y]+v_field
+    datab_dir=osp.join(plot_dir,'data')
+    if osp.isdir(datab_dir)==False:
+        os.mkdir(datab_dir)
+    pickle_fn=osp.join(datab_dir,str(frame)+'.p')
+    pickle.dump(data,open(pickle_fn,"wb"))
+
+    return data
+
+def compute_div(df,groups,frame,data_dir,grids,lengthscale):
+    print '\rcomputing divergence field '+str(frame),
+    sys.stdout.flush()
+    plot_dir=osp.join(data_dir,'divergence')
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
+
+    #get avg_vfield
+    pickle_fn=osp.join(data_dir,'vfield','data',str(frame)+'.p')
+    if osp.exists(pickle_fn):
+        data=pickle.load( open( pickle_fn, "rb" ))
+        avg_vfield=data[3:5]
+    else:
+        print 'ERROR: database does not exist'
+        return
+
+    #compute div
+    node_grid,center_grid=grids
+    x,y=center_grid
+    div = zeros((x.shape[0],x.shape[1]))
+    vx=avg_vfield[0];vy=avg_vfield[1]
+    for i in range(1,x.shape[0]-1):
+        for j in range(1,x.shape[1]-1):
+            dy=y[i,j]-y[i-1,j]/lengthscale; dx=x[i,j]-x[i,j-1]/lengthscale
+            Dvx=(vx[i,j+1]-vx[i,j-1])/(2*dx);Dvy=(vy[i+1,j]-vy[i-1,j])/(2*dy)
+            div[i,j]=Dvx+Dvy
+
+    #save data in pickle
+    data=div
+    datab_dir=osp.join(plot_dir,'data')
+    if osp.isdir(datab_dir)==False:
+        os.mkdir(datab_dir)
+    pickle_fn=osp.join(datab_dir,str(frame)+'.p')
+    pickle.dump(data,open(pickle_fn,"wb"))
+
+    return data
+
 #################################################################
 ###########   PLOT METHODS   ####################################
 #################################################################
@@ -194,7 +250,7 @@ def plot_cmap(plot_dir,label,cmap,vmin,vmax):
     ax.tick_params(labelsize=16)
     cb.set_label(label=label,size=24)
     filename=osp.join(plot_dir,'colormap.png')
-    fig.savefig(filename, dpi=300)
+    fig.savefig(filename, dpi=300, bbox_inches='tight')
     close('all')
 
 def plot_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False):
@@ -202,9 +258,9 @@ def plot_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=Fal
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
 
-    track_dir=osp.join(data_dir,'traj')
-    if osp.isdir(track_dir)==False:
-        os.mkdir(track_dir)
+    plot_dir=osp.join(data_dir,'traj')
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
 
     group=groups.get_group(frame).reset_index(drop=True)
     r,c=group.shape
@@ -251,113 +307,148 @@ def plot_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=Fal
         cbar = fig.colorbar(cont,cax = cbaxes,label='$z\ (\mu m)$')
         cbaxes.tick_params(labelsize=5,color='w')
         cbaxes.yaxis.label.set_color('white')
-    filename=osp.join(track_dir,'traj_%04d.png'%int(frame))
+    filename=osp.join(plot_dir,'traj_%04d.png'%int(frame))
     fig.savefig(filename, dpi=300)
     close('all')
 
-def plot_vfield(df,groups,frame,data_dir,grids=None,plot_field=True,no_bkg=False):
+def plot_vfield(df,frame,data_dir,no_bkg=False,vlim=None):
     """ Plot velocity field and compute avg vfield on a grid"""
     close('all')
-    print '\rplotting frame '+str(frame),
+    print '\rplotting velocity field '+str(frame),
     sys.stdout.flush()
-    track_dir=osp.join(data_dir,'vfield')
-    if osp.isdir(track_dir)==False:
-        os.mkdir(track_dir)
-
-    dim=2 if 'z' not in df.columns else 3 #2d or 3D
-    coord_list=['vx','vy','vz']
-        
-    group=groups.get_group(frame).reset_index(drop=True)
+    plot_dir=osp.join(data_dir,'vfield')
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
 
     #import image
     fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg)
     #plot quiver
-    if grids is not None:
-        node_grid,center_grid=grids   
-        X,Y=node_grid
-        x,y=center_grid
-        v_field=[zeros((x.shape[0],x.shape[1])) for _ in range(dim)]
-        for i in range(x.shape[0]):
-            for j in range(x.shape[1]):
-                ind=((group['x']>=X[i,j]) & (group['x']<X[i,j+1]) & (group['y']>=Y[i,j]) & (group['y']<Y[i+1,j]))
-                for k in range(dim):
-                    v_field[k][i,j]=group[ind][coord_list[k]].mean()
-        Q=quiver(x,y,*v_field,units='x',cmap='plasma')
+    pickle_fn=osp.join(data_dir,'vfield','data',str(frame)+'.p')
+    if osp.exists(pickle_fn):
+        data=pickle.load( open( pickle_fn, "rb" ))
     else:
-        v_field=[group[coord_list[k]] for k in range(dim)]
-        Q=quiver(group['x'],group['y'],*v_field,units='x',cmap='plasma')
+        print 'ERROR: database does not exist'
+        return
+    norm=plt.Normalize(vlim[0],vlim[1]) if vlim is not None else None
+    Q=quiver(*data,units='x',cmap='plasma',norm=)
 
-    if plot_field:
-        if dim==3:
-            cbaxes = fig.add_axes([0.4, 0.935, 0.025, 0.05])
-            cbar = fig.colorbar(Q,cax = cbaxes,label='$v_z\ (\mu m.min^{-1})$')
-            cbaxes.tick_params(labelsize=5,color='w')
-            cbaxes.yaxis.label.set_color('white')
-        ax.axis([xmin, ymin, xmax, ymax])
-        filename=osp.join(track_dir,'vfield_%04d.png'%int(frame)) if grids is None else osp.join(track_dir,'avg_vfield_%04d.png'%int(frame))
-        fig.savefig(filename, dpi=600)
+    filename=osp.join(plot_dir,'vfield_%04d.png'%int(frame)) if grids is None else osp.join(plot_dir,'avg_vfield_%04d.png'%int(frame))
+    fig.savefig(filename,dpi=600)
     close()
-    
-    #save data in pickle
-    pickle_fn=osp.join(data_dir,'avg_fields.p')
-    if osp.exists(pickle_fn)==False:
-        data={str(frame):v_field}
-        pickle.dump(data,open(pickle_fn,"wb"))
-    else:
-        data=pickle.load(open(pickle_fn,"rb"))
-        data[str(frame)]=v_field
-        pickle.dump(data,open(pickle_fn,"wb"))
 
-def plot_div(df,groups,frame,data_dir,grids,lengthscale,fixed_vlim=None,plot_field=True,no_bkg=False):
+def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False):
+    groups=df.groupby('frame')
+    dim=2 if 'z' not in df.columns else 3 #2d or 3D
+    vmin=np.nan;vmax=np.nan #boudaries of colorbar
+    plot_dir=osp.join(data_dir,'vfield')
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
+
+    #compute data
+    if parallelize:
+        num_cores = multiprocessing.cpu_count()
+        Parallel(n_jobs=num_cores)(delayed(compute_vfield)(df,groups,frame,data_dir,grids) for frame in df['frame'].unique())
+    else:
+        for frame in df['frame'].unique():
+            data=compute_vfield(df,groups,frame,data_dir,grids=grids)
+            if dim==3:
+                if isnan(nanmin(data[4]))==False:
+                    if isnan(vmin): #if no value computed yet
+                        vmin=nanmin(data[4])
+                    else:
+                        vmin=nanmin(data[4]) if nanmin(data[4])<vmin else vmin
+                if isnan(nanmax(data[4]))==False:
+                    if isnan(vmax): #if no value computed yet
+                        vmax=nanmax(data[4])
+                    else:
+                        vmax=nanmax(data[4]) if nanmax(data[4])>vmax else vmax
+    vlim=[vmin,vmax]
+    #plot colorbar
+    if dim==3:
+        plot_cmap(plot_dir,'$v_z\ (\mu m.min^{-1})$',cm.plasma,vmin,vmax)
+
+    #plot maps
+    if parallelize:
+        num_cores = multiprocessing.cpu_count()
+        Parallel(n_jobs=num_cores)(delayed(plot_vfield)(df,frame,data_dir,no_bkg,vlim) for frame in df['frame'].unique())
+    else:
+        for i,frame in enumerate(df['frame'].unique()):
+            plot_vfield(df,frame,data_dir,no_bkg=no_bkg,vlim=vlim)
+
+def plot_div(df,groups,frame,data_dir,no_bkg=False,vlim=[0,0]):
     """ Plot 2D divergence"""
     close('all')
-    print '\rplotting frame '+str(frame),
+    print '\rplotting divergence field '+str(frame),
     sys.stdout.flush()
-    track_dir=osp.join(data_dir,'divergence')
-    if osp.isdir(track_dir)==False:
-        os.mkdir(track_dir)
+    plot_dir=osp.join(data_dir,'divergence')
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
 
-    #get avg_vfield
-    avg_vfields=get_avg_vfields(df,data_dir)
-    avg_vfield=avg_vfields[str(frame)]
-
-    #compute div
-    node_grid,center_grid=grids
-    x,y=center_grid
-    div = zeros((x.shape[0],x.shape[1]))
-    vx=avg_vfield[0];vy=avg_vfield[1]
-    for i in range(1,x.shape[0]-1):
-        for j in range(1,x.shape[1]-1):
-            dy=y[i,j]-y[i-1,j]/lengthscale; dx=x[i,j]-x[i,j-1]/lengthscale
-            Dvx=(vx[i,j+1]-vx[i,j-1])/(2*dx);Dvy=(vy[i+1,j]-vy[i-1,j])/(2*dy)
-            div[i,j]=Dvx+Dvy
-
-    if plot_field:
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg)
-        div_masked = np.ma.array (div, mask=np.isnan(div))
-        if fixed_vlim is not None:
-            vmin=fixed_vlim[0];vmax=fixed_vlim[1]
-        else:
-            vmin=div_masked.min();vmax=div_masked.max()
-        cmap=cm.plasma; cmap.set_bad('w',alpha=0) #set NAN transparent
-        C=ax.pcolormesh(x[1:-1,1:-1],y[1:-1,1:-1],div_masked[1:-1,1:-1],cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
-        cbaxes = fig.add_axes([0.4, 0.935, 0.025, 0.05])
-        cbar = fig.colorbar(C,cax = cbaxes,label='$div(\overrightarrow{v})\ (min^{-1})$')
-        cbaxes.tick_params(labelsize=5,color='w')
-        cbaxes.yaxis.label.set_color('white')
-        ax.axis([xmin, ymin, xmax, ymax])
-        filename=osp.join(track_dir,'div_%04d.png'%int(frame))
-        fig.savefig(filename, dpi=300)
+    #import image
+    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg)
+    #plot quiver
+    pickle_fn=osp.join(data_dir,'vfield','data',str(frame)+'.p')
+    if osp.exists(pickle_fn):
+        div=pickle.load( open( pickle_fn, "rb" ))
+    else:
+        print 'ERROR: database does not exist'
+        return
+    div_masked = np.ma.array (div, mask=np.isnan(div))
+    if fixed_vlim is not None:
+        vmin=fixed_vlim[0];vmax=fixed_vlim[1]
+    else:
+        vmin=div_masked.min();vmax=div_masked.max()
+    cmap=cm.plasma; cmap.set_bad('w',alpha=0) #set NAN transparent
+    C=ax.pcolormesh(x[1:-1,1:-1],y[1:-1,1:-1],div_masked[1:-1,1:-1],cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
+    ax.axis([xmin, ymin, xmax, ymax])
+    filename=osp.join(plot_dir,'div_%04d.png'%int(frame))
+    fig.savefig(filename, dpi=300)
     close()
     return div
+
+def plot_all_div(df,data_dir,grids,refresh=False,no_bkg=False,parallelize=False):
+    groups=df.groupby('frame')
+    vmin=np.nan;vmax=np.nan #boudaries of colorbar
+    plot_dir=osp.join(data_dir,'divergence')
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
+
+    #compute data
+    if parallelize:
+        num_cores = multiprocessing.cpu_count()
+        Parallel(n_jobs=num_cores)(delayed(compute_div)(df,groups,frame,data_dir,grids) for frame in df['frame'].unique())
+    else:
+        for frame in df['frame'].unique():
+            data=compute_div(df,groups,frame,data_dir,grids=grids)
+            if isnan(nanmin(data))==False:
+                if isnan(vmin): #if no value computed yet
+                    vmin=nanmin(data)
+                else:
+                    vmin=nanmin(data) if nanmin(data)<vmin else vmin
+            if isnan(nanmax(data))==False:
+                if isnan(vmax): #if no value computed yet
+                    vmax=nanmax(data)
+                else:
+                    vmax=nanmax(data) if nanmax(data)>vmax else vmax
+    vlim=[vmin,vmax]
+    #plot colorbar
+    plot_cmap(plot_dir,'$div(\overrightarrow{v})\ (min^{-1})$',cm.plasma,vmin,vmax)
+
+    #plot maps
+    if parallelize:
+        num_cores = multiprocessing.cpu_count()
+        Parallel(n_jobs=num_cores)(delayed(plot_vfield)(df,frame,data_dir,no_bkg,vlim) for frame in df['frame'].unique())
+    else:
+        for i,frame in enumerate(df['frame'].unique()):
+            plot_vfield(df,frame,data_dir,no_bkg=no_bkg,vlim=vlim)
 
 def plot_mean_vel(df,groups,frame,data_dir,grids,fixed_vlim=None,plot_field=True,no_bkg=False):
     close('all')
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
-    track_dir=osp.join(data_dir,'mean_vel')
-    if osp.isdir(track_dir)==False:
-        os.mkdir(track_dir)
+    plot_dir=osp.join(data_dir,'mean_vel')
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
 
     #get avg_vfield
     avg_vfields=get_avg_vfields(df,data_dir)
@@ -387,7 +478,7 @@ def plot_mean_vel(df,groups,frame,data_dir,grids,fixed_vlim=None,plot_field=True
         cbaxes.tick_params(labelsize=5,color='w')
         cbaxes.yaxis.label.set_color('white')
         ax.axis([xmin, ymin, xmax, ymax])
-        filename=osp.join(track_dir,'mean_vel_%04d.png'%int(frame))
+        filename=osp.join(plot_dir,'mean_vel_%04d.png'%int(frame))
         fig.savefig(filename, dpi=300)
     close()
     return mean_vel
@@ -403,9 +494,9 @@ def plot_z_flow(df,groups,frame,data_dir,grids,z0,plot_field=True,no_bkg=False):
     close('all')
     print '\rplotting frame '+str(frame),
     sys.stdout.flush()
-    track_dir=osp.join(data_dir,'z_flow')
-    if osp.isdir(track_dir)==False:
-        os.mkdir(track_dir)
+    plot_dir=osp.join(data_dir,'z_flow')
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
 
     group=groups.get_group(frame).reset_index(drop=True)
 
@@ -439,7 +530,7 @@ def plot_z_flow(df,groups,frame,data_dir,grids,z0,plot_field=True,no_bkg=False):
         cbaxes.tick_params(labelsize=5,color='w')
         cbaxes.yaxis.label.set_color('white')
         ax.axis([xmin, ymin, xmax, ymax])
-        filename=osp.join(track_dir,'flow_%04d.png'%int(frame))
+        filename=osp.join(plot_dir,'flow_%04d.png'%int(frame))
         fig.savefig(filename, dpi=300)
     close()
     
