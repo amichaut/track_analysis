@@ -3,6 +3,8 @@ import pandas as pd
 import skimage
 from skimage import io
 from skimage import draw as dr
+from skimage.viewer.canvastools import RectangleTool
+from skimage.viewer import ImageViewer
 import os.path as osp
 import os
 import scipy.interpolate as sci
@@ -71,7 +73,7 @@ def get_info(data_dir):
         print "ERROR: info.txt doesn't exist or is not at the right place"
     return info
 
-def get_data(data_dir,refresh=False,plot_frame=True,plot_data=True,plot_modified_tracks=False,plot_all_traj=False):
+def get_data(data_dir,refresh=False):
     #import
     pickle_fn=osp.join(data_dir,"data_base.p")
     if osp.exists(pickle_fn)==False or refresh:
@@ -237,6 +239,51 @@ def compute_div(df,groups,frame,data_dir,grids,lengthscale):
 
     return data
 
+def get_rect_coord(extents):
+    """Small function used by get_ROI"""
+    global viewer,coord_list
+    coord_list.append(extents)
+
+def get_ROI(data_dir,frame):
+    """Interactive function used to get ROIs coordinates of a given image"""
+    global viewer,coord_list
+
+    filename=osp.join(data_dir,'raw/%04d.png'%int(frame))
+    im = io.imread(filename)
+
+    selecting=True
+    while selecting:
+        viewer = ImageViewer(im)
+        coord_list = []
+        rect_tool = RectangleTool(viewer, on_enter=get_rect_coord) 
+        print "Draw your selections, press ENTER to validate one and close the window when you are finished"
+        viewer.show()
+        print 'You have selected %d ROIs'%len(coord_list)
+        finished=raw_input('Is the selection correct? [y]/n: ')
+        if finished!='n':
+            selecting=False
+    return coord_list
+
+def filter_by_ROI(df,data_dir):
+    '''Function used to choose subsets of cells given there position at a certain frame'''
+    tracks=df.groupby('traj')
+    subdf_list=[]
+    frame=input('Give the frame number at which you want to make your selection: ')
+    ROI_list=get_ROI(data_dir,frame)
+    for ROI in ROI_list:
+        xmin,xmax,ymin,ymax=ROI
+        ind=((df['frame']==frame) & (df['x']>=xmin) & (df['x']<=xmax) & (df['y']>=ymin) & (df['y']<=ymax))
+        subdf_frame=df[ind] #the subset at the given frame
+
+        #get the subset in the whole dataset
+        subdf=pd.DataFrame()
+        for t in subdf_frame['traj'].unique():
+            track=tracks.get_group(t)
+            subdf=pd.concat([subdf,track])
+        subdf_list.append(subdf)
+
+    return subdf_list
+
 #################################################################
 ###########   PLOT METHODS   ####################################
 #################################################################
@@ -253,63 +300,79 @@ def plot_cmap(plot_dir,label,cmap,vmin,vmax):
     fig.savefig(filename, dpi=300, bbox_inches='tight')
     close('all')
 
-def plot_cells(df,groups,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False):
+def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False):
     """ Print the tracked pictures with updated (=relinked) tracks"""
-    print '\rplotting frame '+str(frame),
+    print '\rplotting cells '+str(frame),
     sys.stdout.flush()
 
     plot_dir=osp.join(data_dir,'traj')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
 
-    group=groups.get_group(frame).reset_index(drop=True)
-    r,c=group.shape
+    multiple_groups=False
+    if len(df_list)>1:
+        multiple_groups=True
 
-    if plot_traj:
-        track_groups=df.groupby(['traj'])
     z_labeling=False
-    if len(z_lim)>0:
+    if len(z_lim)>0 and multiple_groups is False: #z_labeling impossible if multiple groups
         z_labeling=True
-        z_map=linspace(z_lim[0],z_lim[1],1000)
-        #create z color map
-        fig2=figure()
-        Z = [[0,0],[0,0]]
-        cont = plt.contourf(Z, z_map, cmap=cm.plasma)
-        plt.close(fig2)
 
     #import image
-    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg)
-    for i in range(0,r):
-        #write label
-        x=group.loc[i,'x']
-        y=group.loc[i,'y']
-        track=int(group.loc[i,'traj'])
-        s='%d'%(track)
-        if hide_labels is False:
-            ax.text(x,y,s,fontsize=5,color='w')
-        if plot_traj:
-            #plot trajectory
-            traj=get_obj_traj(track_groups,track,max_frame=frame)
-            traj_length,c=traj.shape
-            if traj_length>1:
-                if z_labeling:
-                    X=traj['x'].values;Y=traj['y'].values;Z=traj['z_rel'].values; #convert to numpy to optimize speed
-                    for j in range(1,traj_length):
-                        ax.plot([X[j-1],X[j]],[Y[j-1],Y[j]],ls='-',color=get_cmap_color(Z[j],cm.plasma,vmin=z_lim[0],vmax=z_lim[1]))
-                    ax.plot(X[traj_length-1],Y[traj_length-1],marker='.',color=get_cmap_color(Z[j],cm.plasma,vmin=z_lim[0],vmax=z_lim[1]))
-                else:
-                    ax.plot(traj['x'],traj['y'],ls='-',color=color_list[track%7])
-                    ax.plot(traj['x'].values[-1],traj['y'].values[-1],marker='.',color=color_list[track%7])
-                ax.axis([xmin, ymin, xmax, ymax])
+    fig,ax,xmin,ymin,xmax,ymax=get_background(df_list[0],data_dir,frame,no_bkg=no_bkg)
+    for k,df in enumerate(df_list):
+        groups=groups_list[k]
+        group=groups.get_group(frame).reset_index(drop=True)
+        r,c=group.shape
 
-    if z_labeling:
-        cbaxes = fig.add_axes([0.4, 0.935, 0.025, 0.05])
-        cbar = fig.colorbar(cont,cax = cbaxes,label='$z\ (\mu m)$')
-        cbaxes.tick_params(labelsize=5,color='w')
-        cbaxes.yaxis.label.set_color('white')
+        if plot_traj:
+            track_groups=df.groupby(['traj'])
+
+        for i in range(0,r):
+            #write label
+            x=group.loc[i,'x']
+            y=group.loc[i,'y']
+            track=int(group.loc[i,'traj'])
+            s='%d'%(track)
+            if hide_labels is False:
+                ax.text(x,y,s,fontsize=5,color='w')
+            if plot_traj:
+                #plot trajectory
+                traj=get_obj_traj(track_groups,track,max_frame=frame)
+                traj_length,c=traj.shape
+                if traj_length>1:
+                    if z_labeling:
+                        X=traj['x'].values;Y=traj['y'].values;Z=traj['z_rel'].values; #convert to numpy to optimize speed
+                        for j in range(1,traj_length):
+                            ax.plot([X[j-1],X[j]],[Y[j-1],Y[j]],ls='-',color=get_cmap_color(Z[j],cm.plasma,vmin=z_lim[0],vmax=z_lim[1]))
+                        ax.plot(X[traj_length-1],Y[traj_length-1],marker='.',color=get_cmap_color(Z[j],cm.plasma,vmin=z_lim[0],vmax=z_lim[1]))
+                    elif multiple_groups:
+                        ax.plot(traj['x'],traj['y'],ls='-',color=color_list[k%7])
+                        ax.plot(traj['x'].values[-1],traj['y'].values[-1],marker='.',color=color_list[k%7])
+                    else:
+                        ax.plot(traj['x'],traj['y'],ls='-',color=color_list[track%7])
+                        ax.plot(traj['x'].values[-1],traj['y'].values[-1],marker='.',color=color_list[track%7])                       
+                    ax.axis([xmin, ymin, xmax, ymax])
+
     filename=osp.join(plot_dir,'traj_%04d.png'%int(frame))
     fig.savefig(filename, dpi=300)
     close('all')
+
+def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,parallelize=False):
+    plot_dir=osp.join(data_dir,'traj')
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
+
+    groups_list=[df.groupby('frame') for df in df_list]
+
+    if len(z_lim)==2:
+        plot_cmap(plot_dir,'$z\ (\mu m)$',cm.plasma,z_lim[0],z_lim[1])
+
+    if parallelize:
+        num_cores = multiprocessing.cpu_count()
+        Parallel(n_jobs=num_cores)(delayed(plot_cells)(df,groups,frame,data_dir,plot_traj,z_lim,hide_labels,no_bkg) for frame in df['frame'].unique())
+    else:
+        for frame in df['frame'].unique():
+            plot_cells(df_list,groups_list,frame,data_dir,plot_traj,z_lim,hide_labels,no_bkg)
 
 def plot_vfield(df,frame,data_dir,no_bkg=False,vlim=None):
     """ Plot velocity field and compute avg vfield on a grid"""
@@ -330,7 +393,7 @@ def plot_vfield(df,frame,data_dir,no_bkg=False,vlim=None):
         print 'ERROR: database does not exist'
         return
     norm=plt.Normalize(vlim[0],vlim[1]) if vlim is not None else None
-    Q=quiver(*data,units='x',cmap='plasma',norm=)
+    Q=quiver(*data,units='x',cmap='plasma',norm=norm)
 
     filename=osp.join(plot_dir,'vfield_%04d.png'%int(frame)) if grids is None else osp.join(plot_dir,'avg_vfield_%04d.png'%int(frame))
     fig.savefig(filename,dpi=600)
@@ -406,7 +469,7 @@ def plot_div(df,groups,frame,data_dir,no_bkg=False,vlim=[0,0]):
     close()
     return div
 
-def plot_all_div(df,data_dir,grids,refresh=False,no_bkg=False,parallelize=False):
+def plot_all_div(df,data_dir,grids,lengthscale,refresh=False,no_bkg=False,parallelize=False):
     groups=df.groupby('frame')
     vmin=np.nan;vmax=np.nan #boudaries of colorbar
     plot_dir=osp.join(data_dir,'divergence')
@@ -416,7 +479,7 @@ def plot_all_div(df,data_dir,grids,refresh=False,no_bkg=False,parallelize=False)
     #compute data
     if parallelize:
         num_cores = multiprocessing.cpu_count()
-        Parallel(n_jobs=num_cores)(delayed(compute_div)(df,groups,frame,data_dir,grids) for frame in df['frame'].unique())
+        Parallel(n_jobs=num_cores)(delayed(compute_div)(df,groups,frame,data_dir,grids,lengthscale) for frame in df['frame'].unique())
     else:
         for frame in df['frame'].unique():
             data=compute_div(df,groups,frame,data_dir,grids=grids)
@@ -437,10 +500,10 @@ def plot_all_div(df,data_dir,grids,refresh=False,no_bkg=False,parallelize=False)
     #plot maps
     if parallelize:
         num_cores = multiprocessing.cpu_count()
-        Parallel(n_jobs=num_cores)(delayed(plot_vfield)(df,frame,data_dir,no_bkg,vlim) for frame in df['frame'].unique())
+        Parallel(n_jobs=num_cores)(delayed(plot_div)(df,groups,frame,data_dir,no_bkg,vlim) for frame in df['frame'].unique())
     else:
         for i,frame in enumerate(df['frame'].unique()):
-            plot_vfield(df,frame,data_dir,no_bkg=no_bkg,vlim=vlim)
+            plot_div(df,groups,frame,data_dir,no_bkg,vlim)
 
 def plot_mean_vel(df,groups,frame,data_dir,grids,fixed_vlim=None,plot_field=True,no_bkg=False):
     close('all')
@@ -549,12 +612,25 @@ def plot_all_frame(plot_func,df,data_dir,parallelize=True,**kwargs):
 ###########   CONTAINER METHODS   ###############################
 #################################################################
 
-def cell_analysis(data_dir,refresh=False,min_traj_len=24,parallelize=False,x_grid_size=10,plot_traj=True,hide_labels=True,no_bkg=False,z0=None,dimensions=None):
+def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,z0=None,dimensions=None):
     df,lengthscale,timescale,columns=get_data(data_dir,refresh=refresh)
-    df2=filter_by_traj_len(df,min_traj_len=min_traj_len)
-    print "plotting cells trajectories"
     z_lim=[df['z_rel'].min(),df['z_rel'].max()]
-    plot_all_frame(plot_cells,df2,data_dir,parallelize=parallelize,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg)
+    df_list=[]
+
+    subset=raw_input('By what do you want to filter? Type: none, ROI, track_length. \t ')
+    if subset=='none':
+        df_list=[df]
+    elif subset=='ROI':
+        df_list=filter_by_ROI(df,data_dir)
+    elif subset=='track_length':
+        min_traj_len=input('Give the minimum track length? (number of frames): ')
+        df_list=[filter_by_traj_len(df,min_traj_len=min_traj_len)]
+    else:
+        print 'ERROR: not a valid answer'
+        return
+    
+    print "plotting cells trajectories"
+    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize)
 
 def map_analysis(data_dir,refresh=False,min_traj_len=24,parallelize=False,x_grid_size=10,plot_traj=True,hide_labels=True,no_bkg=False,z0=None,dimensions=None):
     df,lengthscale,timescale,columns=get_data(data_dir,refresh=refresh)
