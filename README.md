@@ -10,5 +10,8 @@ This codes provides different functions to analyze tracking data of cells over t
 
 ### How do I run the code ###
 * Open 'analyze_traj.py' in a IPython terminal: open terminal and run the command: %run <path_to_analyze_traj.py> (you can just drag and drop the file on the terminal after %run )
-* run the command: run_analysis(data_dir) with data_dir being the path of the data directory.
-The main argument to pass are: min_traj_len (the minimum length you want for plotting the trajectories), x_grid_size (the number of column in the grid), z0 (the plan defining the z flow)
+* run the commands: 
+- cell_analysis(data_dir,refresh,parallelize,plot_traj,hide_labels,no_bkg,dimensions)
+- map_analysis(data_dir,refresh,parallelize,x_grid_size,no_bkg,z0,dimensions)
+
+with the mandatory argument: data_dir: data directory and the optional arguments: refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, plot_traj (default true) to print the cell trajectories, hide_labels (default True) to hide the cell label, no_bkg (default False) to remove the image background, dimensions ([row,column] default None) to give the image dimension in case of no_bkg, x_grid_size: number of columns in the grid (default 10), z0: altitude of the z_flow surface (default None => center of z axis)
