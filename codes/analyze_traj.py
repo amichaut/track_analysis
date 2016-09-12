@@ -105,15 +105,6 @@ def get_data(data_dir,refresh=False):
     
     return df,lengthscale,timescale,columns
 
-def get_vlim(plot_func,df,data_dir,avg_vfields,**kwargs):
-    groups=df.groupby('frame')
-    vmin=1000;vmax=-1000
-    for i,frame in enumerate(avg_vfields['frame_list']):
-        data=plot_func(df,groups,frame,data_dir,avg_vfields['vfield_list'][i],plot_field=False,**kwargs)
-        data = np.ma.array (data, mask=np.isnan(data))
-        vmin=min(vmin,data.min());vmax=max(vmax,data.max())
-    return [vmin,vmax]
-
 def get_obj_traj(track_groups,track,max_frame=None):
     '''gets the trajectory of an object. track_groups is the output of a groupby(['relabel'])'''
     group=track_groups.get_group(track)
@@ -178,6 +169,7 @@ def make_grid(x_grid_size,data_dir,dimensions=None):
 def compute_vfield(df,frame,groups,data_dir,grids=None):
     print '\rcomputing velocity field '+str(frame),
     sys.stdout.flush()
+
     plot_dir=osp.join(data_dir,'vfield')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
@@ -198,34 +190,26 @@ def compute_vfield(df,frame,groups,data_dir,grids=None):
                 for k in range(dim):
                     v_field[k][i,j]=group[ind][coord_list[k]].mean()
     else:
-        v_field=[group[coord_list[k]] for k in range(dim)]
+        v_field=[group[coord_list[k]].values for k in range(dim)]
         x=group['x'].values;y=group['y'].values
 
     #save data in pickle
     data=[x,y]+v_field
-    datab_dir=osp.join(plot_dir,'data')
-    if osp.isdir(datab_dir)==False:
-        os.mkdir(datab_dir)
-    pickle_fn=osp.join(datab_dir,str(frame)+'.p')
-    pickle.dump(data,open(pickle_fn,"wb"))
+    save_map_data(plot_dir,data,frame)
 
     return data
 
 def compute_div(df,frame,groups,data_dir,grids,lengthscale):
     print '\rcomputing divergence field '+str(frame),
     sys.stdout.flush()
-    plot_dir=osp.join(data_dir,'divergence')
+
+    plot_dir=osp.join(data_dir,'div')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
 
     #get avg_vfield
-    pickle_fn=osp.join(data_dir,'vfield','data',str(frame)+'.p')
-    if osp.exists(pickle_fn):
-        data=pickle.load( open( pickle_fn, "rb" ))
-        avg_vfield=data[3:5]
-    else:
-        print 'ERROR: database does not exist'
-        return
+    data=get_map_data(osp.join(data_dir,'vfield'),frame)
+    avg_vfield=data[2:]
 
     #compute div
     node_grid,center_grid=grids
@@ -240,33 +224,24 @@ def compute_div(df,frame,groups,data_dir,grids,lengthscale):
 
     #save data in pickle
     data=(x,y,div)
-    datab_dir=osp.join(plot_dir,'data')
-    if osp.isdir(datab_dir)==False:
-        os.mkdir(datab_dir)
-    pickle_fn=osp.join(datab_dir,str(frame)+'.p')
-    pickle.dump(data,open(pickle_fn,"wb"))
+    save_map_data(plot_dir,data,frame)
 
     return data
 
 def compute_mean_vel(df,frame,groups,data_dir,grids):
     print '\rcomputing mean velocity field '+str(frame),
     sys.stdout.flush()
+
     plot_dir=osp.join(data_dir,'mean_vel')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
 
     #get avg_vfield
-    pickle_fn=osp.join(data_dir,'vfield','data',str(frame)+'.p')
-    if osp.exists(pickle_fn):
-        data=pickle.load( open( pickle_fn, "rb" ))
-        avg_vfield=data[3:]
-    else:
-        print 'ERROR: database does not exist'
-        return
+    data=get_map_data(osp.join(data_dir,'vfield'),frame)
+    avg_vfield=data[2:]
 
     dim=2 if 'z' not in df.columns else 3 #2d or 3D
 
-    print avg_vfield
     #compute avg
     V=0
     for k in range(dim):
@@ -276,15 +251,11 @@ def compute_mean_vel(df,frame,groups,data_dir,grids):
     #save data in pickle
     X,Y=grids[1]
     data=(X,Y,mean_vel)
-    datab_dir=osp.join(plot_dir,'data')
-    if osp.isdir(datab_dir)==False:
-        os.mkdir(datab_dir)
-    pickle_fn=osp.join(datab_dir,str(frame)+'.p')
-    pickle.dump(data,open(pickle_fn,"wb"))
+    save_map_data(plot_dir,data,frame)
 
     return data
 
-def compute_z_flow(df,frame,groups,z0,data_dir,grids):
+def compute_z_flow(df,frame,groups,data_dir,grids,z0):
     print '\rcomputing z_flow field '+str(frame),
     sys.stdout.flush()
     #Make sure these are 3D data
@@ -320,11 +291,7 @@ def compute_z_flow(df,frame,groups,z0,data_dir,grids):
 
     #save data in pickle
     data=(x,y,flow)
-    datab_dir=osp.join(plot_dir,'data')
-    if osp.isdir(datab_dir)==False:
-        os.mkdir(datab_dir)
-    pickle_fn=osp.join(datab_dir,str(frame)+'.p')
-    pickle.dump(data,open(pickle_fn,"wb"))
+    save_map_data(plot_dir,data,frame)
 
     return data
 
@@ -373,18 +340,25 @@ def filter_by_ROI(df,data_dir):
 
     return subdf_list
 
+def save_map_data(plot_dir,data,frame):
+    datab_dir=osp.join(plot_dir,'data')
+    if osp.isdir(datab_dir)==False:
+        os.mkdir(datab_dir)
+    pickle_fn=osp.join(datab_dir,'%04d.p'%frame)
+    pickle.dump(data,open(pickle_fn,"wb"))
+
 def get_map_data(plot_dir,frame):
-    pickle_fn=osp.join(plot_dir,'data',str(frame)+'.p')
+    pickle_fn=osp.join(plot_dir,'data','%04d.p'%frame)
     if osp.exists(pickle_fn):
         data=pickle.load( open( pickle_fn, "rb" ))
     else:
         print 'ERROR: database does not exist'
     return data
 
-def get_vlim(df,compute_func,*args):
+def get_vlim(df,compute_func,groups,data_dir,grids,**kwargs):
     vmin=np.nan;vmax=np.nan #boudaries of colorbar
     for frame in df['frame'].unique():
-        data=compute_func(df,frame,*args)
+        data=compute_func(df,frame,groups,data_dir,grids,**kwargs)
         data=data[-1]
         if isnan(nanmin(data))==False:
             if isnan(vmin): #if no value computed yet
@@ -397,7 +371,6 @@ def get_vlim(df,compute_func,*args):
             else:
                 vmax=nanmax(data) if nanmax(data)>vmax else vmax
     return [vmin,vmax]
-
 
 #################################################################
 ###########   PLOT METHODS   ####################################
@@ -496,7 +469,7 @@ def plot_div(df,frame,data_dir,no_bkg=False,vlim=None):
     close('all')
     print '\rplotting divergence field '+str(frame),
     sys.stdout.flush()
-    plot_dir=osp.join(data_dir,'divergence')
+    plot_dir=osp.join(data_dir,'div')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
 
@@ -551,7 +524,7 @@ def plot_z_flow(df,frame,data_dir,no_bkg=False,vlim=None):
     X,Y,flow=get_map_data(plot_dir,frame)
     [vmin,vmax]= [flow.min(),flow.max()] if vlim is None else vlim
     cmap=cm.plasma
-    C=ax.pcolormesh(x,y,flow,cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
+    C=ax.pcolormesh(X,Y,flow,cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
     ax.axis([xmin, ymin, xmax, ymax])
     filename=osp.join(plot_dir,'flow_%04d.png'%int(frame))
     fig.savefig(filename, dpi=300)
@@ -579,7 +552,6 @@ def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,n
 def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refresh=False):
     groups=df.groupby('frame')
     dim=2 if 'z' not in df.columns else 3 #2d or 3D
-    vmin=np.nan;vmax=np.nan #boudaries of colorbar
     plot_dir=osp.join(data_dir,'vfield')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
@@ -610,8 +582,7 @@ def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refres
 
 def plot_all_div(df,data_dir,grids,lengthscale,refresh=False,no_bkg=False,parallelize=False):
     groups=df.groupby('frame')
-    vmin=np.nan;vmax=np.nan #boudaries of colorbar
-    plot_dir=osp.join(data_dir,'divergence')
+    plot_dir=osp.join(data_dir,'div')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
 
@@ -667,7 +638,7 @@ def plot_all_mean_vel(df,data_dir,grids,refresh=False,no_bkg=False,parallelize=F
         for i,frame in enumerate(df['frame'].unique()):
             plot_mean_vel(df,frame,data_dir,no_bkg,vlim)
 
-def plot_all_z_flow(df,data_dir,grids,lengthscale,refresh=False,no_bkg=False,parallelize=False):
+def plot_all_z_flow(df,data_dir,grids,z0,refresh=False,no_bkg=False,parallelize=False):
     groups=df.groupby('frame')
 
     plot_dir=osp.join(data_dir,'z_flow')
@@ -697,6 +668,42 @@ def plot_all_z_flow(df,data_dir,grids,lengthscale,refresh=False,no_bkg=False,par
         for i,frame in enumerate(df['frame'].unique()):
             plot_z_flow(df,frame,data_dir,no_bkg,vlim)
 
+def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallelize=False,**kwargs):
+
+    map_dic={'div':{'compute_func':compute_div,'plot_func':plot_div,'cmap_label':'$div(\overrightarrow{v})\ (min^{-1})$'},
+         'mean_vel':{'compute_func':compute_mean_vel,'plot_func':plot_mean_vel,'cmap_label':'$v\ (\mu m.min^{-1})$'},
+         'z_flow':{'compute_func':compute_z_flow,'plot_func':plot_z_flow,'cmap_label':'cell flow $(min^{-1})$'},
+         'vfield':{'compute_func':compute_vfield,'plot_func':plot_vfield,'cmap_label':'$v_z\ (\mu m.min^{-1})$'}}
+
+    groups=df.groupby('frame')
+
+    plot_dir=osp.join(data_dir,map_kind)
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
+
+    if osp.isdir(osp.join(plot_dir,'data')) is False:
+        refresh=True
+    if refresh:
+        #compute data
+        if parallelize:
+            num_cores = multiprocessing.cpu_count()
+            Parallel(n_jobs=num_cores)(delayed(map_dic[map_kind]['compute_func'])(df,groups,frame,data_dir,grids,lengthscale) for frame in df['frame'].unique())
+        else:
+            vlim=get_vlim(df,map_dic[map_kind]['compute_func'],groups,data_dir,grids,**kwargs)
+            pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
+
+    vlim=pickle.load( open(osp.join(plot_dir,'data','vlim.p'), "rb" ))
+    #plot colorbar
+    plot_cmap(plot_dir,map_dic[map_kind]['cmap_label'],cm.plasma,vlim[0],vlim[1])
+
+    #plot maps
+    if parallelize:
+        num_cores = multiprocessing.cpu_count()
+        Parallel(n_jobs=num_cores)(delayed(plot_z_flow)(df,frame,data_dir,no_bkg,vlim) for frame in df['frame'].unique())
+    else:
+        for i,frame in enumerate(df['frame'].unique()):
+            map_dic[map_kind]['plot_func'](df,frame,data_dir,no_bkg,vlim)
+
 #################################################################
 ###########   CONTAINER METHODS   ###############################
 #################################################################
@@ -725,13 +732,17 @@ def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=
     df,lengthscale,timescale,columns=get_data(data_dir,refresh=refresh)
     print "plotting velocity fields"
     grids=make_grid(x_grid_size,data_dir,dimensions=dimensions)
-    # plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize)
-    # print "plotting divergence"
-    # plot_all_div(df,data_dir,grids,lengthscale,refresh=refresh,no_bkg=no_bkg,parallelize=parallelize)
-    print "plotting mean velocity map"
-    plot_all_mean_vel(df,data_dir,grids,refresh=refresh,no_bkg=no_bkg,parallelize=parallelize)
-    print "plotting z flow map"
-    if z0 is None:
-        z0= df['z'].min() + (df['z'].max()-df['z'].min())/2.
-    plot_all_z_flow(df,data_dir,grids,lengthscale,refresh=refresh,no_bkg=no_bkg,parallelize=parallelize)
+    plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize)
+    if grids is not None:
+        print "plotting divergence"
+        # plot_all_div(df,data_dir,grids,lengthscale,refresh=refresh,no_bkg=no_bkg,parallelize=parallelize)
+        plot_all_maps(df,data_dir,grids,'div',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale)
+        print "plotting mean velocity map"
+        # plot_all_mean_vel(df,data_dir,grids,refresh=refresh,no_bkg=no_bkg,parallelize=parallelize)
+        plot_all_maps(df,data_dir,grids,'mean_vel',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize)
+        print "plotting z flow map"
+        if z0 is None:
+            z0= df['z'].min() + (df['z'].max()-df['z'].min())/2.
+        # plot_all_z_flow(df,data_dir,grids,z0,refresh=refresh,no_bkg=no_bkg,parallelize=parallelize)
+        plot_all_maps(df,data_dir,grids,'z_flow',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,z0=z0)
 
