@@ -137,7 +137,7 @@ def get_background(df,data_dir,frame,no_bkg=False):
         im = io.imread(filename)
         n=im.shape[0]; m=im.shape[1]
     fig=figure(frameon=False)
-    fig.set_size_inches(m/300,n/300)
+    fig.set_size_inches(m/300.,n/300.)
     ax = fig.add_axes([0, 0, 1, 1])
     ax.imshow(im,aspect='auto',origin='lower')
     xmin, ymin, xmax, ymax=ax.axis('off')
@@ -388,7 +388,7 @@ def plot_cmap(plot_dir,label,cmap,vmin,vmax):
     fig.savefig(filename, dpi=300, bbox_inches='tight')
     close('all')
 
-def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False):
+def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,lengthscale=1.5996):
     """ Print the tracked pictures with updated (=relinked) tracks"""
     print '\rplotting cells '+str(frame),
     sys.stdout.flush()
@@ -424,6 +424,12 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
             if hide_labels is False:
                 ax.text(x,y,s,fontsize=5,color='w')
             if plot_traj:
+                #traj size
+                length_ref=1.5996
+                lw_ref=rcParams['lines.linewidth']
+                ms_ref=rcParams['lines.markersize']
+                size_factor=lengthscale/length_ref
+                lw=lw_ref*size_factor; ms=ms_ref*size_factor
                 #plot trajectory
                 traj=get_obj_traj(track_groups,track,max_frame=frame)
                 traj_length,c=traj.shape
@@ -431,14 +437,14 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
                     if z_labeling:
                         X=traj['x'].values;Y=traj['y'].values;Z=traj['z_rel'].values; #convert to numpy to optimize speed
                         for j in range(1,traj_length):
-                            ax.plot([X[j-1],X[j]],[Y[j-1],Y[j]],ls='-',color=get_cmap_color(Z[j],cm.plasma,vmin=z_lim[0],vmax=z_lim[1]))
-                        ax.plot(X[traj_length-1],Y[traj_length-1],marker='.',color=get_cmap_color(Z[j],cm.plasma,vmin=z_lim[0],vmax=z_lim[1]))
+                            ax.plot([X[j-1],X[j]],[Y[j-1],Y[j]],lw=lw,ls='-',color=get_cmap_color(Z[j],cm.plasma,vmin=z_lim[0],vmax=z_lim[1]))
+                        ax.plot(X[traj_length-1],Y[traj_length-1],ms=ms,marker='.',color=get_cmap_color(Z[j],cm.plasma,vmin=z_lim[0],vmax=z_lim[1]))
                     elif multiple_groups:
-                        ax.plot(traj['x'],traj['y'],ls='-',color=color_list[k%7])
-                        ax.plot(traj['x'].values[-1],traj['y'].values[-1],marker='.',color=color_list[k%7])
+                        ax.plot(traj['x'],traj['y'],lw=lw,ls='-',color=color_list[k%7])
+                        ax.plot(traj['x'].values[-1],traj['y'].values[-1],ms=ms,marker='.',color=color_list[k%7])
                     else:
-                        ax.plot(traj['x'],traj['y'],ls='-',color=color_list[track%7])
-                        ax.plot(traj['x'].values[-1],traj['y'].values[-1],marker='.',color=color_list[track%7])                       
+                        ax.plot(traj['x'],traj['y'],lw=lw,ls='-',color=color_list[track%7])
+                        ax.plot(traj['x'].values[-1],traj['y'].values[-1],ms=ms,marker='.',color=color_list[track%7])                       
                     ax.axis([xmin, ymin, xmax, ymax])
 
     filename=osp.join(plot_dir,'traj_%04d.png'%int(frame))
