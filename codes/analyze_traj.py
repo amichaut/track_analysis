@@ -388,7 +388,7 @@ def plot_cmap(plot_dir,label,cmap,vmin,vmax):
     fig.savefig(filename, dpi=300, bbox_inches='tight')
     close('all')
 
-def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,lengthscale=1.5996):
+def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,lengthscale=4.):
     """ Print the tracked pictures with updated (=relinked) tracks"""
     print '\rplotting cells '+str(frame),
     sys.stdout.flush()
@@ -425,7 +425,7 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
                 ax.text(x,y,s,fontsize=5,color='w')
             if plot_traj:
                 #traj size
-                length_ref=1.5996
+                length_ref=4.
                 lw_ref=rcParams['lines.linewidth']
                 ms_ref=rcParams['lines.markersize']
                 size_factor=lengthscale/length_ref
@@ -538,7 +538,7 @@ def plot_z_flow(df,frame,data_dir,no_bkg=False,vlim=None):
     
     return flow
 
-def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,parallelize=False):
+def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,parallelize=False,lengthscale=4.):
     plot_dir=osp.join(data_dir,'traj')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
@@ -550,10 +550,10 @@ def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,n
 
     if parallelize:
         num_cores = multiprocessing.cpu_count()
-        Parallel(n_jobs=num_cores)(delayed(plot_cells)(df,groups,frame,data_dir,plot_traj,z_lim,hide_labels,no_bkg) for frame in df['frame'].unique())
+        Parallel(n_jobs=num_cores)(delayed(plot_cells)(df,groups,frame,data_dir,plot_traj,z_lim,hide_labels,no_bkg,lengthscale) for frame in df['frame'].unique())
     else:
         for frame in df['frame'].unique():
-            plot_cells(df_list,groups_list,frame,data_dir,plot_traj,z_lim,hide_labels,no_bkg)
+            plot_cells(df_list,groups_list,frame,data_dir,plot_traj,z_lim,hide_labels,no_bkg,lengthscale)
 
 def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refresh=False):
     groups=df.groupby('frame')
@@ -732,7 +732,7 @@ def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_l
         return
     
     print "plotting cells trajectories"
-    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize)
+    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale)
 
 def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None):
     df,lengthscale,timescale,columns=get_data(data_dir,refresh=refresh)
