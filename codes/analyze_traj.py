@@ -17,7 +17,7 @@ plt.style.use('ggplot') # Make the graphs a bit prettier
 
 color_list=[c['color'] for c in list(plt.rcParams['axes.prop_cycle'])]
 
-welcome_message="""\n\n WELCOME TO TRACK_ANALYSIS \n Developped and maintained by Arthur Michaut: arthur.michaut@gmail.com \n Released on 09-10-2016\n\n\n     _''_\n    / o  \\\n  <       |\n    \\    /__\n    /       \\-----\n    /    \\    \\   \\__\n    |     \\_____\\  __>\n     \\--       ___/  \n        \\     /\n         || ||\n         /\\ /\\\n\n"""
+welcome_message="""\n\n WELCOME TO TRACK_ANALYSIS \n Developped and maintained by Arthur Michaut: arthur.michaut@gmail.com \n Released on 09-15-2016\n\n\n     _''_\n    / o  \\\n  <       |\n    \\    /__\n    /       \\-----\n    /    \\    \\   \\__\n    |     \\_____\\  __>\n     \\--       ___/  \n        \\     /\n         || ||\n         /\\ /\\\n\n"""
 usage_message="""Usage: \n- plot cells analysis using cell_analysis(data_dir,refresh,parallelize,plot_traj,hide_labels,no_bkg,dimensions) \n \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
 plot_traj (default true) to print the cell trajectories, hide_labels (default True) to hide the cell label, no_bkg (default False) to remove the image background, dimensions ([row,column] default None) to give the image dimension in case of no_bkg \n
 - plot maps using map_analysis(data_dir,refresh,parallelize,x_grid_size,no_bkg,z0,dimensions) \n \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
@@ -25,7 +25,7 @@ x_grid_size: number of columns in the grid (default 10), no_bkg (default False) 
 
 print welcome_message
 print usage_message
-print 'WARNING parallelize is not available!!!'
+print 'WARNING parallelize is not available for map_analysis!!!'
 
 #################################################################
 ###########   PREPARE METHODS   #################################
@@ -550,7 +550,7 @@ def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,n
 
     if parallelize:
         num_cores = multiprocessing.cpu_count()
-        Parallel(n_jobs=num_cores)(delayed(plot_cells)(df,groups,frame,data_dir,plot_traj,z_lim,hide_labels,no_bkg,lengthscale) for frame in df['frame'].unique())
+        Parallel(n_jobs=num_cores)(delayed(plot_cells)(df_list,groups_list,frame,data_dir,plot_traj,z_lim,hide_labels,no_bkg,lengthscale) for frame in df['frame'].unique())
     else:
         for frame in df['frame'].unique():
             plot_cells(df_list,groups_list,frame,data_dir,plot_traj,z_lim,hide_labels,no_bkg,lengthscale)
@@ -565,13 +565,16 @@ def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refres
     if osp.isdir(osp.join(plot_dir,'data')) is False:
         refresh=True
     if refresh:
-        #compute data
-        if parallelize:
-            num_cores = multiprocessing.cpu_count()
-            Parallel(n_jobs=num_cores)(delayed(compute_vfield)(df,groups,frame,data_dir,grids) for frame in df['frame'].unique())
-        else:
-            vlim=get_vlim(df,compute_vfield,groups,data_dir,grids)
-            pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
+        # compute data
+        # if parallelize:
+        #     num_cores = multiprocessing.cpu_count()
+        #     Parallel(n_jobs=num_cores)(delayed(compute_vfield)(df,groups,frame,data_dir,grids) for frame in df['frame'].unique())
+        # else:
+        #     vlim=get_vlim(df,compute_vfield,groups,data_dir,grids)
+        #     pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
+
+        vlim=get_vlim(df,compute_vfield,groups,data_dir,grids)
+        pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
 
     vlim=pickle.load( open(osp.join(plot_dir,'data','vlim.p'), "rb" ))
     #plot colorbar
@@ -585,94 +588,6 @@ def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refres
     else:
         for i,frame in enumerate(df['frame'].unique()):
             plot_vfield(df,frame,data_dir,no_bkg=no_bkg,vlim=vlim)
-
-def plot_all_div(df,data_dir,grids,lengthscale,refresh=False,no_bkg=False,parallelize=False):
-    groups=df.groupby('frame')
-    plot_dir=osp.join(data_dir,'div')
-    if osp.isdir(plot_dir)==False:
-        os.mkdir(plot_dir)
-
-    if osp.isdir(osp.join(plot_dir,'data')) is False:
-        refresh=True
-    if refresh:
-        #compute data
-        if parallelize:
-            num_cores = multiprocessing.cpu_count()
-            Parallel(n_jobs=num_cores)(delayed(compute_div)(df,groups,frame,data_dir,grids,lengthscale) for frame in df['frame'].unique())
-        else:
-            vlim=get_vlim(df,compute_div,groups,data_dir,grids,lengthscale)
-            pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
-
-    vlim=pickle.load( open(osp.join(plot_dir,'data','vlim.p'), "rb" ))            
-    #plot colorbar
-    plot_cmap(plot_dir,'$div(\overrightarrow{v})\ (min^{-1})$',cm.plasma,vlim[0],vlim[1])
-
-    #plot maps
-    if parallelize:
-        num_cores = multiprocessing.cpu_count()
-        Parallel(n_jobs=num_cores)(delayed(plot_div)(df,frame,data_dir,no_bkg,vlim) for frame in df['frame'].unique())
-    else:
-        for i,frame in enumerate(df['frame'].unique()):
-            plot_div(df,frame,data_dir,no_bkg,vlim)
-
-def plot_all_mean_vel(df,data_dir,grids,refresh=False,no_bkg=False,parallelize=False):
-    groups=df.groupby('frame')
-    plot_dir=osp.join(data_dir,'mean_vel')
-    if osp.isdir(plot_dir)==False:
-        os.mkdir(plot_dir)
-
-    if osp.isdir(osp.join(plot_dir,'data')) is False:
-        refresh=True
-    if refresh:
-        #compute data
-        if parallelize:
-            num_cores = multiprocessing.cpu_count()
-            Parallel(n_jobs=num_cores)(delayed(compute_mean_vel)(df,groups,frame,data_dir,grids) for frame in df['frame'].unique())
-        else:
-            vlim=get_vlim(df,compute_mean_vel,groups,data_dir,grids)
-            pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
-
-    vlim=pickle.load( open(osp.join(plot_dir,'data','vlim.p'), "rb" ))
-    #plot colorbar
-    plot_cmap(plot_dir,'$v\ (\mu m.min^{-1})$',cm.plasma,vlim[0],vlim[1])
-
-    #plot maps
-    if parallelize:
-        num_cores = multiprocessing.cpu_count()
-        Parallel(n_jobs=num_cores)(delayed(plot_mean_vel)(df,frame,data_dir,no_bkg,vlim) for frame in df['frame'].unique())
-    else:
-        for i,frame in enumerate(df['frame'].unique()):
-            plot_mean_vel(df,frame,data_dir,no_bkg,vlim)
-
-def plot_all_z_flow(df,data_dir,grids,z0,refresh=False,no_bkg=False,parallelize=False):
-    groups=df.groupby('frame')
-
-    plot_dir=osp.join(data_dir,'z_flow')
-    if osp.isdir(plot_dir)==False:
-        os.mkdir(plot_dir)
-
-    if osp.isdir(osp.join(plot_dir,'data')) is False:
-        refresh=True
-    if refresh:
-        #compute data
-        if parallelize:
-            num_cores = multiprocessing.cpu_count()
-            Parallel(n_jobs=num_cores)(delayed(compute_div)(df,groups,frame,data_dir,grids,lengthscale) for frame in df['frame'].unique())
-        else:
-            vlim=get_vlim(df,compute_z_flow,groups,z0,data_dir,grids)
-            pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
-
-    vlim=pickle.load( open(osp.join(plot_dir,'data','vlim.p'), "rb" ))
-    #plot colorbar
-    plot_cmap(plot_dir,'cell flow $(min^{-1})$',cm.plasma,vlim[0],vlim[1])
-
-    #plot maps
-    if parallelize:
-        num_cores = multiprocessing.cpu_count()
-        Parallel(n_jobs=num_cores)(delayed(plot_z_flow)(df,frame,data_dir,no_bkg,vlim) for frame in df['frame'].unique())
-    else:
-        for i,frame in enumerate(df['frame'].unique()):
-            plot_z_flow(df,frame,data_dir,no_bkg,vlim)
 
 def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallelize=False,**kwargs):
 
@@ -714,7 +629,7 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
 ###########   CONTAINER METHODS   ###############################
 #################################################################
 
-def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,dimensions=None):
+def cell_analysis(data_dir,refresh=False,parallelize=True,plot_traj=True,hide_labels=True,no_bkg=False,dimensions=None):
     df,lengthscale,timescale,columns=get_data(data_dir,refresh=refresh)
     z_lim=[df['z_rel'].min(),df['z_rel'].max()]
     df_list=[]
