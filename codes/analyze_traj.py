@@ -25,7 +25,7 @@ x_grid_size: number of columns in the grid (default 10), no_bkg (default False) 
 
 print welcome_message
 print usage_message
-print 'WARNING parallelize is not available for map_analysis!!!'
+print 'WARNING parallelize is not available!'
 
 #################################################################
 ###########   PREPARE METHODS   #################################
@@ -133,7 +133,7 @@ def get_background(df,data_dir,frame,no_bkg=False):
         m=int(df['x'].max());n=int(df['y'].max())
         im = ones((n,m,3)) #create white background ==> not ideal, it would be better not to use imshow and to modify axes rendering
     else:
-        filename=osp.join(data_dir,'raw/%04d.png'%int(frame))
+        filename=osp.join(data_dir,'raw','%04d.png'%int(frame))
         im = io.imread(filename)
         n=im.shape[0]; m=im.shape[1]
     fig=figure(frameon=False)
@@ -163,7 +163,7 @@ def make_grid(x_grid_size,data_dir,dimensions=None):
 
     step=float(xmax-xmin)/x_grid_size
     node_grid=meshgrid(arange(xmin,xmax+step,step),arange(ymin,ymax+step,step))
-    center_grid=meshgrid(arange(xmin+step/2,xmax,step),arange(ymin+step/2,ymax,step))
+    center_grid=meshgrid(arange(xmin+step/2.,xmax,step),arange(ymin+step/2.,ymax,step))
     return node_grid,center_grid
 
 def compute_vfield(df,frame,groups,data_dir,grids=None):
@@ -304,7 +304,7 @@ def get_ROI(data_dir,frame):
     """Interactive function used to get ROIs coordinates of a given image"""
     global viewer,coord_list
 
-    filename=osp.join(data_dir,'raw/%04d.png'%int(frame))
+    filename=osp.join(data_dir,'raw','%04d.png'%int(frame))
     im = io.imread(filename)
 
     selecting=True
@@ -629,7 +629,7 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
 ###########   CONTAINER METHODS   ###############################
 #################################################################
 
-def cell_analysis(data_dir,refresh=False,parallelize=True,plot_traj=True,hide_labels=True,no_bkg=False,dimensions=None):
+def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,dimensions=None):
     df,lengthscale,timescale,columns=get_data(data_dir,refresh=refresh)
     z_lim=[df['z_rel'].min(),df['z_rel'].max()]
     df_list=[]
