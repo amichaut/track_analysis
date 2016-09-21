@@ -676,6 +676,7 @@ def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=
         plot_all_maps(df,data_dir,grids,'div',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale)
         plot_all_maps(df,data_dir,grids,'mean_vel',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,manual_vlim=True)
         if z0 is None:
-            z0= df['z'].min() + (df['z'].max()-df['z'].min())/2.
+            z0= df['z_rel'].min() + (df['z_rel'].max()-df['z_rel'].min())/2.
+            print 'z0=%f'%z0
         plot_all_maps(df,data_dir,grids,'z_flow',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,z0=z0)
 
