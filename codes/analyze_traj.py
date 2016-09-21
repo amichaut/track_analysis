@@ -255,7 +255,7 @@ def compute_mean_vel(df,frame,groups,data_dir,grids):
 
     return data
 
-def compute_z_flow(df,frame,groups,data_dir,grids,z0):
+def compute_z_flow(df,frame,groups,data_dir,grids,z0,timescale):
     print '\rcomputing z_flow field '+str(frame),
     sys.stdout.flush()
     #Make sure these are 3D data
@@ -269,15 +269,15 @@ def compute_z_flow(df,frame,groups,data_dir,grids,z0):
 
     group=groups.get_group(frame).reset_index(drop=True)
 
-    df_layer=group[abs(group['vz'])>=abs(z0-group['z_rel'])] #layer of cells crossing the surface
+    df_layer=group[abs(group['vz']*timescale)>=abs(z0-group['z_rel'])] #layer of cells crossing the surface
     df_ascending=df_layer[((df_layer['vz']>=0) & (df_layer['z_rel']<=z0))] #ascending cells below the surface
     df_descending=df_layer[((df_layer['vz']<=0) & (df_layer['z_rel']>=z0))] #descending cells above the surface
     
     #calculate the intersection coordinates (x0,y0) of the vector and the surface (calculate homothety coefficient alpha)
     for df_ in [df_ascending,df_descending]:
-        df_['alpha']=(z0-df_['z_rel'])/df_['vz']
-        df_['x0']=df_['x']+df_['alpha']*df_['vx']
-        df_['y0']=df_['y']+df_['alpha']*df_['vy']
+        df_.loc[:,'alpha']=abs(z0-df_['z_rel'])/(df_['vz']*timescale)
+        df_.loc[:,'x0']=df_['x']+df_['alpha']*df_['vx']*timescale
+        df_.loc[:,'y0']=df_['y']+df_['alpha']*df_['vy']*timescale
     
     node_grid,center_grid=grids   
     X,Y=node_grid
@@ -287,7 +287,7 @@ def compute_z_flow(df,frame,groups,data_dir,grids,z0):
         for j in range(x.shape[1]):
             ind_asc=((df_ascending['x0']>=X[i,j]) & (df_ascending['x0']<X[i,j+1]) & (df_ascending['y0']>=Y[i,j]) & (df_ascending['y0']<Y[i+1,j]))
             ind_des=((df_descending['x0']>=X[i,j]) & (df_descending['x0']<X[i,j+1]) & (df_descending['y0']>=Y[i,j]) & (df_descending['y0']<Y[i+1,j]))
-            flow[i,j]=df_ascending[ind_asc].shape[0]-df_descending[ind_des].shape[0]
+            flow[i,j]=(df_ascending[ind_asc].shape[0]-df_descending[ind_des].shape[0])/timescale
 
     #save data in pickle
     data=(x,y,flow)
@@ -678,5 +678,5 @@ def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=
         if z0 is None:
             z0= df['z_rel'].min() + (df['z_rel'].max()-df['z_rel'].min())/2.
             print 'z0=%f'%z0
-        plot_all_maps(df,data_dir,grids,'z_flow',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,z0=z0)
+        plot_all_maps(df,data_dir,grids,'z_flow',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,z0=z0,timescale=timescale)
 
