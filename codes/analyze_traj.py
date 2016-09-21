@@ -355,11 +355,18 @@ def get_map_data(plot_dir,frame):
         print 'ERROR: database does not exist'
     return data
 
-def get_vlim(df,compute_func,groups,data_dir,grids,**kwargs):
+def get_vlim(df,compute_func,groups,data_dir,grids,show_hist=False,**kwargs):
     vmin=np.nan;vmax=np.nan #boudaries of colorbar
-    for frame in df['frame'].unique():
+    for i,frame in enumerate(df['frame'].unique()):
         data=compute_func(df,frame,groups,data_dir,grids,**kwargs)
         data=data[-1]
+        if show_hist:
+            if i==0:
+                r,c=data.shape
+                data_hist=data.reshape(r*c,1)
+            else:
+                r,c=data.shape
+                data_hist=vstack((data_hist,data.reshape(r*c,1)))
         if isnan(nanmin(data))==False:
             if isnan(vmin): #if no value computed yet
                 vmin=nanmin(data)
@@ -370,6 +377,19 @@ def get_vlim(df,compute_func,groups,data_dir,grids,**kwargs):
                 vmax=nanmax(data)
             else:
                 vmax=nanmax(data) if nanmax(data)>vmax else vmax
+
+    if show_hist:
+        close('all')
+        # ion()
+        s=pd.Series(data_hist[:,0])
+        s.plot.hist()
+        show()
+        vlim=raw_input('If you want to manually set the colorbar boundaries, enter the values (separated by a coma). Otherwise, press Enter: ')
+        vlim=vlim.split(',')
+        if len(vlim)==2:
+            vmin=float(vlim[0]); vmax=float(vlim[1])
+        close()
+        # ioff()
     return [vmin,vmax]
 
 #################################################################
@@ -589,7 +609,7 @@ def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refres
         for i,frame in enumerate(df['frame'].unique()):
             plot_vfield(df,frame,data_dir,no_bkg=no_bkg,vlim=vlim)
 
-def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallelize=False,**kwargs):
+def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallelize=False,manual_vlim=False,**kwargs):
 
     map_dic={'div':{'compute_func':compute_div,'plot_func':plot_div,'cmap_label':'$div(\overrightarrow{v})\ (min^{-1})$'},
          'mean_vel':{'compute_func':compute_mean_vel,'plot_func':plot_mean_vel,'cmap_label':'$v\ (\mu m.min^{-1})$'},
@@ -610,7 +630,7 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
             num_cores = multiprocessing.cpu_count()
             Parallel(n_jobs=num_cores)(delayed(map_dic[map_kind]['compute_func'])(df,groups,frame,data_dir,grids,lengthscale) for frame in df['frame'].unique())
         else:
-            vlim=get_vlim(df,map_dic[map_kind]['compute_func'],groups,data_dir,grids,**kwargs)
+            vlim=get_vlim(df,map_dic[map_kind]['compute_func'],groups,data_dir,grids,show_hist=manual_vlim,**kwargs)
             pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
 
     vlim=pickle.load( open(osp.join(plot_dir,'data','vlim.p'), "rb" ))
@@ -650,17 +670,17 @@ def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_l
     plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale)
 
 def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None):
-    df,lengthscale,timescale,columns=get_data(data_dir,refresh=refresh)
+    df,lengthscale,timescale,columns=get_data(data_dir,refresh=False)
     print "plotting velocity fields"
     grids=make_grid(x_grid_size,data_dir,dimensions=dimensions)
-    plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize)
+    # plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize,refresh=refresh)
     if grids is not None:
         print "plotting divergence"
         # plot_all_div(df,data_dir,grids,lengthscale,refresh=refresh,no_bkg=no_bkg,parallelize=parallelize)
-        plot_all_maps(df,data_dir,grids,'div',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale)
+        # plot_all_maps(df,data_dir,grids,'div',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale)
         print "plotting mean velocity map"
         # plot_all_mean_vel(df,data_dir,grids,refresh=refresh,no_bkg=no_bkg,parallelize=parallelize)
-        plot_all_maps(df,data_dir,grids,'mean_vel',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize)
+        plot_all_maps(df,data_dir,grids,'mean_vel',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,manual_vlim=True)
         print "plotting z flow map"
         if z0 is None:
             z0= df['z'].min() + (df['z'].max()-df['z'].min())/2.
