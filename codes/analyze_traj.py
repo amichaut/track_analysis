@@ -650,7 +650,7 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
 #################################################################
 
 def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,dimensions=None):
-    df,lengthscale,timescale,columns=get_data(data_dir,refresh=refresh)
+    df,lengthscale,timescale,columns=get_data(data_dir,refresh=False)
     z_lim=[df['z_rel'].min(),df['z_rel'].max()]
     df_list=[]
 
@@ -666,24 +666,16 @@ def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_l
         print 'ERROR: not a valid answer'
         return
     
-    print "plotting cells trajectories"
     plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale)
 
 def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None):
     df,lengthscale,timescale,columns=get_data(data_dir,refresh=False)
-    print "plotting velocity fields"
     grids=make_grid(x_grid_size,data_dir,dimensions=dimensions)
-    # plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize,refresh=refresh)
+    plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize,refresh=refresh)
     if grids is not None:
-        print "plotting divergence"
-        # plot_all_div(df,data_dir,grids,lengthscale,refresh=refresh,no_bkg=no_bkg,parallelize=parallelize)
-        # plot_all_maps(df,data_dir,grids,'div',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale)
-        print "plotting mean velocity map"
-        # plot_all_mean_vel(df,data_dir,grids,refresh=refresh,no_bkg=no_bkg,parallelize=parallelize)
+        plot_all_maps(df,data_dir,grids,'div',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale)
         plot_all_maps(df,data_dir,grids,'mean_vel',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,manual_vlim=True)
-        print "plotting z flow map"
         if z0 is None:
             z0= df['z'].min() + (df['z'].max()-df['z'].min())/2.
-        # plot_all_z_flow(df,data_dir,grids,z0,refresh=refresh,no_bkg=no_bkg,parallelize=parallelize)
         plot_all_maps(df,data_dir,grids,'z_flow',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,z0=z0)
 
