@@ -300,11 +300,11 @@ def get_rect_coord(extents):
     global viewer,coord_list
     coord_list.append(extents)
 
-def get_ROI(data_dir,frame):
+def get_ROI(image_dir,frame):
     """Interactive function used to get ROIs coordinates of a given image"""
     global viewer,coord_list
 
-    filename=osp.join(data_dir,'raw','%04d.png'%int(frame))
+    filename=osp.join(image_dir,'%04d.png'%int(frame))
     im = io.imread(filename)
 
     selecting=True
@@ -325,7 +325,8 @@ def filter_by_ROI(df,data_dir):
     tracks=df.groupby('traj')
     subdf_list=[]
     frame=input('Give the frame number at which you want to make your selection: ')
-    ROI_list=get_ROI(data_dir,frame)
+    image_dir=osp.join(data_dir,'raw')
+    ROI_list=get_ROI(image_dir,frame)
     for ROI in ROI_list:
         xmin,xmax,ymin,ymax=ROI
         ind=((df['frame']==frame) & (df['x']>=xmin) & (df['x']<=xmax) & (df['y']>=ymin) & (df['y']<=ymax))
@@ -391,6 +392,10 @@ def get_vlim(df,compute_func,groups,data_dir,grids,show_hist=False,**kwargs):
         close()
         # ioff()
     return [vmin,vmax]
+
+# def select_map_ROI():
+
+
 
 #################################################################
 ###########   PLOT METHODS   ####################################
@@ -467,7 +472,7 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
                         ax.plot(traj['x'].values[-1],traj['y'].values[-1],ms=ms,marker='.',color=color_list[track%7])                       
                     ax.axis([xmin, ymin, xmax, ymax])
 
-    filename=osp.join(plot_dir,'traj_%04d.png'%int(frame))
+    filename=osp.join(plot_dir,'%04d.png'%int(frame))
     fig.savefig(filename, dpi=300)
     close('all')
 
@@ -486,7 +491,7 @@ def plot_vfield(df,frame,data_dir,no_bkg=False,vlim=None):
     norm=plt.Normalize(vlim[0],vlim[1]) if vlim is not None else None
     Q=quiver(*data,units='x',cmap='plasma',norm=norm)
 
-    filename=osp.join(plot_dir,'vfield_%04d.png'%int(frame))
+    filename=osp.join(plot_dir,'%04d.png'%int(frame))
     fig.savefig(filename,dpi=600)
     close()
 
@@ -507,7 +512,7 @@ def plot_div(df,frame,data_dir,no_bkg=False,vlim=None):
     cmap=cm.plasma; cmap.set_bad('w',alpha=0) #set NAN transparent
     C=ax.pcolormesh(X[1:-1,1:-1],Y[1:-1,1:-1],div_masked[1:-1,1:-1],cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
     ax.axis([xmin, ymin, xmax, ymax])
-    filename=osp.join(plot_dir,'div_%04d.png'%int(frame))
+    filename=osp.join(plot_dir,'%04d.png'%int(frame))
     fig.savefig(filename, dpi=300)
     close()
 
@@ -527,7 +532,7 @@ def plot_mean_vel(df,frame,data_dir,no_bkg=False,vlim=None):
     cmap=cm.plasma; cmap.set_bad('w',alpha=0) #set NAN transparent
     C=ax.pcolormesh(X,Y,mean_vel_masked,cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
     ax.axis([xmin, ymin, xmax, ymax])
-    filename=osp.join(plot_dir,'mean_vel_%04d.png'%int(frame))
+    filename=osp.join(plot_dir,'%04d.png'%int(frame))
     fig.savefig(filename, dpi=300)
     close()
 
@@ -552,7 +557,7 @@ def plot_z_flow(df,frame,data_dir,no_bkg=False,vlim=None):
     cmap=cm.plasma
     C=ax.pcolormesh(X,Y,flow,cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
     ax.axis([xmin, ymin, xmax, ymax])
-    filename=osp.join(plot_dir,'flow_%04d.png'%int(frame))
+    filename=osp.join(plot_dir,'%04d.png'%int(frame))
     fig.savefig(filename, dpi=300)
     close()
     
