@@ -393,8 +393,17 @@ def get_vlim(df,compute_func,groups,data_dir,grids,show_hist=False,**kwargs):
         # ioff()
     return [vmin,vmax]
 
-# def select_map_ROI():
+def select_map_ROI(data_dir,map_kind,frame):
+    image_dir=osp.join(data_dir,map_kind)
+    ROI_list=get_ROI(image_dir,frame)
+    X,Y,data=get_map_data(image_dir,frame)
+    sub_data_list=[]
+    for ROI in ROI_list:
+        xmin,xmax,ymin,ymax=ROI
+        ind=((X>=xmin) & (X<=xmax) & (Y>=ymin) & (Y<=ymax))
+        sub_data_list.append([X[ind],Y[ind],data[ind]])
 
+    return sub_data_list
 
 
 #################################################################
