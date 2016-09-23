@@ -12,6 +12,7 @@ import sys
 import pickle
 import multiprocessing
 from joblib import Parallel, delayed
+import seaborn as sns
 
 plt.style.use('ggplot') # Make the graphs a bit prettier
 
@@ -21,11 +22,16 @@ welcome_message="""\n\n WELCOME TO TRACK_ANALYSIS \n Developped and maintained b
 usage_message="""Usage: \n- plot cells analysis using cell_analysis(data_dir,refresh,parallelize,plot_traj,hide_labels,no_bkg,dimensions) \n \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
 plot_traj (default true) to print the cell trajectories, hide_labels (default True) to hide the cell label, no_bkg (default False) to remove the image background, dimensions ([row,column] default None) to give the image dimension in case of no_bkg \n
 - plot maps using map_analysis(data_dir,refresh,parallelize,x_grid_size,no_bkg,z0,dimensions) \n \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
+x_grid_size: number of columns in the grid (default 10), no_bkg (default False) to remove the image background, z0: altitude of the z_flow surface (default None => center of z axis), dimensions ([row,column] default None) to give the image dimension in case of no_bkg 
+- plot average ROIs using map_analysis(data_dir,refresh,parallelize,x_grid_size,no_bkg,z0,dimensions) \n \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
 x_grid_size: number of columns in the grid (default 10), no_bkg (default False) to remove the image background, z0: altitude of the z_flow surface (default None => center of z axis), dimensions ([row,column] default None) to give the image dimension in case of no_bkg """
+
 
 print welcome_message
 print usage_message
 print 'WARNING parallelize is not available!'
+
+global map_dic
 
 #################################################################
 ###########   PREPARE METHODS   #################################
@@ -393,17 +399,59 @@ def get_vlim(df,compute_func,groups,data_dir,grids,show_hist=False,**kwargs):
         # ioff()
     return [vmin,vmax]
 
-def select_map_ROI(data_dir,map_kind,frame):
-    image_dir=osp.join(data_dir,map_kind)
-    ROI_list=get_ROI(image_dir,frame)
-    X,Y,data=get_map_data(image_dir,frame)
-    sub_data_list=[]
-    for ROI in ROI_list:
-        xmin,xmax,ymin,ymax=ROI
-        ind=((X>=xmin) & (X<=xmax) & (Y>=ymin) & (Y<=ymax))
-        sub_data_list.append([X[ind],Y[ind],data[ind]])
+def get_subblock_data(X,Y,data,ROI):
+    square_ROI=False
+    xmin,xmax,ymin,ymax=ROI
+    ind=((X>=xmin) & (X<=xmax) & (Y>=ymin) & (Y<=ymax))
+    x,y=meshgrid(np.unique(X[ind]),np.unique(Y[ind])) #sublock (x,y)
+    if x.shape[0]==x.shape[1]:
+        square_ROI=True
+    dat=data[ind].reshape(*x.shape)
+    return [x,y,dat,square_ROI]
 
-    return sub_data_list
+def select_map_ROI(data_dir,map_kind,frame,ROI_list=None):
+    image_dir=osp.join(data_dir,map_kind)
+    not_found=True
+    while not_found:
+        if ROI_list is None:
+            ROI_list=get_ROI(image_dir,frame)
+        data=get_map_data(image_dir,frame)
+        X=data[0];Y=data[1];data=data[-1]
+        ROI_data_list=[]
+        square_ROI=False
+        for ROI in ROI_list:
+            x,y,dat,square_ROI=get_subblock_data(X,Y,data,ROI)
+            ROI_data_list.append([x,y,dat])
+
+        if square_ROI:
+            re_select=raw_input("WARNING: there is a square ROI. Do you want to select again? [y]/n ")
+            if re_select!='n':
+                not_found=True
+            else:
+                not_found=False
+        else:
+            not_found=False
+
+    return [ROI_data_list,ROI_list]
+
+def avg_ROI_major_axis(ROI_data):
+
+    #get principal axis
+    r,c=ROI_data[0].shape
+    if r==c:
+        print 'ERROR: square ROI'
+        return
+    elif r>c:
+        major_ax,minor_ax=0,1
+    elif r<c:
+        major_ax,minor_ax=1,0
+
+    #average
+    avg_data=[]
+    for d in ROI_data:
+        avg_data.append(np.nanmean(d,axis=minor_ax))
+
+    return {'data':avg_data,'major_ax':major_ax}
 
 
 #################################################################
@@ -501,7 +549,7 @@ def plot_vfield(df,frame,data_dir,no_bkg=False,vlim=None):
     Q=quiver(*data,units='x',cmap='plasma',norm=norm)
 
     filename=osp.join(plot_dir,'%04d.png'%int(frame))
-    fig.savefig(filename,dpi=600)
+    fig.savefig(filename,dpi=300)
     close()
 
 def plot_div(df,frame,data_dir,no_bkg=False,vlim=None):
@@ -625,11 +673,6 @@ def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refres
 
 def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallelize=False,manual_vlim=False,**kwargs):
 
-    map_dic={'div':{'compute_func':compute_div,'plot_func':plot_div,'cmap_label':'$div(\overrightarrow{v})\ (min^{-1})$'},
-         'mean_vel':{'compute_func':compute_mean_vel,'plot_func':plot_mean_vel,'cmap_label':'$v\ (\mu m.min^{-1})$'},
-         'z_flow':{'compute_func':compute_z_flow,'plot_func':plot_z_flow,'cmap_label':'cell flow $(min^{-1})$'},
-         'vfield':{'compute_func':compute_vfield,'plot_func':plot_vfield,'cmap_label':'$v_z\ (\mu m.min^{-1})$'}}
-
     groups=df.groupby('frame')
 
     plot_dir=osp.join(data_dir,map_kind)
@@ -658,6 +701,109 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
     else:
         for i,frame in enumerate(df['frame'].unique()):
             map_dic[map_kind]['plot_func'](df,frame,data_dir,no_bkg,vlim)
+
+def plot_ROI_avg(df,data_dir,map_kind,frame,ROI_data_list,plot_on_map=False,plot_section=True):
+    close('all')
+    print '\rplotting ROI average '+str(frame),
+    sys.stdout.flush()
+    plot_dir=osp.join(data_dir,map_kind,'ROI_avg')
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
+
+    if plot_on_map:
+        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+
+    plot_data={}
+    for i,ROI_data in enumerate(ROI_data_list):
+        avg=avg_ROI_major_axis(ROI_data)
+        if plot_on_map:
+            ax.plot(avg['data'][0],avg['data'][1],color=color_list[i])
+        fig2, ax2 = plt.subplots(1, 1)
+        if avg['major_ax']==0:
+            x_data=avg['data'][1]
+            title='x = %d px'%avg['data'][0][0]
+            xlab='y (px)'
+        elif avg['major_ax']==1:
+            x_data=avg['data'][0]
+            title='y = %d px'%avg['data'][1][0]
+            xlab='x (px)'
+        
+        filename_prefix=osp.join(plot_dir,'ROI_%d-%d-%d-%d'%(avg['data'][0].min(),avg['data'][0].max(),avg['data'][1].min(),avg['data'][1].max()))
+        plot_data[str(i)]={'x_data':x_data,'y_data':avg['data'][2],'title':title,'xlab':xlab,'filename_prefix':filename_prefix}
+        
+        if plot_section:
+            ax2.plot(x_data,avg['data'][2])
+            ax2.set_title(title)
+            ax2.set_xlabel(xlab)
+            ax2.set_ylabel(map_dic[map_kind]['cmap_label'])
+            filename=filename_prefix+'_frame_%04d.png'%frame
+            fig2.savefig(filename,dpi=300,bbox_inches='tight')
+
+    if plot_on_map:
+        filename=osp.join(plot_dir,'sections_%04d.png'%frame)
+        fig.savefig(filename,dpi=300)
+        close()
+
+    return plot_data
+
+def plot_all_avg_ROI(df,data_dir,map_kind,select_frame=None,ROI_list=None,plot_on_map=False,plot_section=True,cumulative_plot=True,avg_plot=True,timescale=1.):
+
+    close('all')
+
+    plot_dir=osp.join(data_dir,map_kind,'ROI_avg')
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
+
+    if select_frame is None:
+        select_frame=input("Give the frame number on which you want to draw your ROIs: ")
+    
+    [ROI_data_list,ROI_list]=select_map_ROI(data_dir,map_kind,select_frame,ROI_list)
+
+    plot_data_list=[]
+    for i,frame in enumerate(df['frame'].unique()):
+        [ROI_data_list,ROI_list]=select_map_ROI(data_dir,map_kind,frame,ROI_list)
+        if i>0:
+            plot_on_map=False #plot it only once
+        plot_data_list.append(plot_ROI_avg(df,data_dir,map_kind,frame,ROI_data_list,plot_on_map=plot_on_map,plot_section=plot_section))
+
+    if cumulative_plot:
+        time_min=df['t'].min(); time_max=df['t'].max()
+        #colorbar
+        Z = [[0,0],[0,0]]
+        levels=df['t'].unique()
+        CS3 = plt.contourf(Z, levels, cmap=cm.plasma)
+        plt.clf()
+        for i,ROI_data in enumerate(ROI_data_list):
+            x_data_l=[p[str(i)]['x_data'] for p in plot_data_list]
+            y_data_l=[p[str(i)]['y_data'] for p in plot_data_list]
+            title=plot_data_list[0][str(i)]['title'];xlab=plot_data_list[0][str(i)]['xlab']
+            fig, ax = plt.subplots(1, 1)
+            for j in range(len(x_data_l)):
+                time=df['frame'].unique()[j]*timescale
+                ax.plot(x_data_l[j],y_data_l[j],color=get_cmap_color(time, cm.plasma, vmin=time_min, vmax=time_max))
+            ax.set_title(title)
+            ax.set_xlabel(xlab)
+            ax.set_ylabel(map_dic[map_kind]['cmap_label'])
+            cb=fig.colorbar(CS3)
+            cb.set_label(label='time (min)')
+            filename=plot_data_list[0][str(i)]['filename_prefix']+'_cumulative.png'
+            fig.savefig(filename,dpi=300,bbox_inches='tight')
+            close()
+
+    if avg_plot:
+        for i,ROI_data in enumerate(ROI_data_list):
+            x_data=plot_data_list[0][str(i)]['x_data']
+            y_data_l=[p[str(i)]['y_data'] for p in plot_data_list]
+            title=plot_data_list[0][str(i)]['title'];xlab=plot_data_list[0][str(i)]['xlab']
+            fig, ax = plt.subplots(1, 1)
+            sns.tsplot(y_data_l,time=x_data,ax=ax,estimator=np.nanmean,err_style="unit_traces")
+            ax.set_title(title)
+            ax.set_xlabel(xlab)
+            ax.set_ylabel(map_dic[map_kind]['cmap_label'])
+            filename=plot_data_list[0][str(i)]['filename_prefix']+'_average.png'
+            fig.savefig(filename,dpi=300,bbox_inches='tight')
+            close()
+
 
 #################################################################
 ###########   CONTAINER METHODS   ###############################
@@ -694,3 +840,14 @@ def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=
             print 'z0=%f'%z0
         plot_all_maps(df,data_dir,grids,'z_flow',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,z0=z0,timescale=timescale)
 
+def avg_ROIs(data_dir,select_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True):
+    df,lengthscale,timescale,columns=get_data(data_dir,refresh=False)
+    map_kind=raw_input("Give the map wou want to plot your ROIs on (div,mean_vel,z_flow,vfield): ")
+    plot_all_avg_ROI(df,data_dir,map_kind,select_frame=select_frame,ROI_list=ROI_list,plot_on_map=plot_on_map,plot_section=plot_section,cumulative_plot=cumulative_plot,avg_plot=avg_plot,timescale=timescale)
+
+###############################################
+
+map_dic={'div':{'compute_func':compute_div,'plot_func':plot_div,'cmap_label':'$div(\overrightarrow{v})\ (min^{-1})$'},
+     'mean_vel':{'compute_func':compute_mean_vel,'plot_func':plot_mean_vel,'cmap_label':'$v\ (\mu m.min^{-1})$'},
+     'z_flow':{'compute_func':compute_z_flow,'plot_func':plot_z_flow,'cmap_label':'cell flow $(min^{-1})$'},
+     'vfield':{'compute_func':compute_vfield,'plot_func':plot_vfield,'cmap_label':'$v_z\ (\mu m.min^{-1})$'}}
