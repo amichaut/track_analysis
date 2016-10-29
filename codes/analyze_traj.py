@@ -101,14 +101,15 @@ def get_data(data_dir,refresh=False):
         df=pd.DataFrame(data[:,1:],columns=columns) 
         #scale data
         dimensions=['x','y','z'] if 'z' in columns else ['x','y']
+        dim=len(dimensions)
         scale_dim(df,dimensions,timescale,lengthscale)
         compute_parameters(df)
         #update pickle
         pickle.dump([df,lengthscale,timescale,columns], open( osp.join(data_dir,"data_base.p"), "wb" ) )
     else:
-        [df,lengthscale,timescale,columns]=pickle.load( open( pickle_fn, "rb" ))
+        [df,lengthscale,timescale,columns,dim]=pickle.load( open( pickle_fn, "rb" ))
     
-    return df,lengthscale,timescale,columns
+    return df,lengthscale,timescale,columns,dim
 
 def get_obj_traj(track_groups,track,max_frame=None):
     '''gets the trajectory of an object. track_groups is the output of a groupby(['relabel'])'''
@@ -803,14 +804,47 @@ def plot_all_avg_ROI(df,data_dir,map_kind,select_frame=None,ROI_list=None,plot_o
             fig.savefig(filename,dpi=300,bbox_inches='tight')
             close()
 
+def plot_superimposed_traj(df,data_dir,traj_list,center_origin=True,fn_end=''):
+    """ Plot a set of trajectories without any background. If center_origin all first points are located in the center"""
+    close('all')
+    
+    track_groups=df.groupby(['traj'])
+
+    if center_origin:
+        for i,traj_id in enumerate(traj_list):
+            traj=get_obj_traj(track_groups,traj_id)
+            if i=0:
+                minx=traj['x'].min(); maxx=traj['x'].max(); miny=traj['y'].min(); maxy=traj['y'].max()
+            else:
+                minx=traj['x'].min() if traj['x'].min()<minx else minx
+                maxx=traj['x'].max() if traj['x'].max()>maxx else maxx
+                miny=traj['y'].min() if traj['y'].min()<miny else miny
+                maxy=traj['y'].max() if traj['y'].max()>maxy else maxy
+                midx=minx+(maxx-minx)/2.
+                midy=miny+(maxy-miny)/2.
+
+    fig,ax=plt.subplots(1,1)
+    ax.axis('off')
+    for i,traj_id in enumerate(traj_list):
+        traj=get_obj_traj(track_groups,traj_id)
+        traj_length = traj.shape[0]
+        if center_origin:
+            traj['x']=traj['x']-midx; traj['y']=traj['y']-midy
+        ax.plot(traj['x'],traj['y'],ls='-',color=color_list[i%7])
+        ax.plot(traj.loc[traj_length,'x'],traj.loc[traj_length,'y'],ls='none',marker='.',c='k')
+    centered='centered' if center_origin else ''
+    filename=osp.join(data_dir,'superimposed'+fn_end+centered+'.svg')
+    fig.savefig(filename, dpi=300)
+    close(fig)
+
 
 #################################################################
 ###########   CONTAINER METHODS   ###############################
 #################################################################
 
-def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,dimensions=None):
-    df,lengthscale,timescale,columns=get_data(data_dir,refresh=False)
-    z_lim=[df['z_rel'].min(),df['z_rel'].max()]
+def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False):
+    df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=False)
+    z_lim=[df['z_rel'].min(),df['z_rel'].max()] if dim==3 else []
     df_list=[]
 
     subset=raw_input('By what do you want to filter? Type: none, ROI, track_length. \t ')
@@ -828,7 +862,7 @@ def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_l
     plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale)
 
 def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None):
-    df,lengthscale,timescale,columns=get_data(data_dir,refresh=False)
+    df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=False)
     grids=make_grid(x_grid_size,data_dir,dimensions=dimensions)
     plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize,refresh=refresh)
     if grids is not None:
@@ -840,9 +874,20 @@ def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=
         plot_all_maps(df,data_dir,grids,'z_flow',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,z0=z0,timescale=timescale)
 
 def avg_ROIs(data_dir,select_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True):
-    df,lengthscale,timescale,columns=get_data(data_dir,refresh=False)
+    df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=False)
     map_kind=raw_input("Give the map wou want to plot your ROIs on (div,mean_vel,z_flow,vfield): ")
     plot_all_avg_ROI(df,data_dir,map_kind,select_frame=select_frame,ROI_list=ROI_list,plot_on_map=plot_on_map,plot_section=plot_section,cumulative_plot=cumulative_plot,avg_plot=avg_plot,timescale=timescale)
+
+def traj_plot(data_dir):
+    df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=False)
+    traj_list=raw_input('give the list of traj you want to plot (sep: comas) if none given they will all be plotted: ')
+    traj_list=traj_list.split(',')
+    if len(traj_list)==0:
+        traj_list=df['traj'].values
+    else:
+        traj_list=[int(t) for t in traj_list]
+    plot_superimposed_traj(df,data_dir,traj_list)
+
 
 ###############################################
 
