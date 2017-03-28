@@ -130,23 +130,26 @@ def filter_by_traj_len(df,min_traj_len=1,max_traj_len=None):
             df2=pd.concat([df2,track])
     return df2
 
-def get_background(df,data_dir,frame,no_bkg=False):
+def get_background(df,data_dir,frame,no_bkg=False,image_dir=None):
     """Get image background or create white backgound if no_bkg"""
-    if not osp.exists(osp.join(data_dir,'raw')): #check if images exist 
+    orig = 'lower' if image_dir is None else 'upper' #trick to plot for the first time only inverting Yaxis: not very elegant...
+    if image_dir is None:
+        image_dir = osp.join(data_dir,'raw')
+    if not osp.exists(image_dir): #check if images exist 
        no_bkg=True
     if no_bkg:
         #get approximative image size
         m=int(df['x'].max());n=int(df['y'].max())
         im = ones((n,m,3)) #create white background ==> not ideal, it would be better not to use imshow and to modify axes rendering
     else:
-        filename=osp.join(data_dir,'raw','%04d.png'%int(frame))
+        filename=osp.join(image_dir,'%04d.png'%int(frame))
         im = io.imread(filename)
         n=im.shape[0]; m=im.shape[1]
     fig=figure(frameon=False)
     fig.set_size_inches(m/300.,n/300.)
     ax = fig.add_axes([0, 0, 1, 1])
-    ax.imshow(im,aspect='auto',origin='lower')
-    xmin, ymin, xmax, ymax=ax.axis('off')
+    ax.imshow(im,aspect='auto',origin=orig)
+    xmin,xmax,ymin,ymax=ax.axis('off')
     return fig,ax,xmin,ymin,xmax,ymax
 
 def make_grid(x_grid_size,data_dir,dimensions=None):
@@ -427,6 +430,7 @@ def select_map_ROI(data_dir,map_kind,frame,ROI_list=None):
             re_select=raw_input("WARNING: there is a square ROI. Do you want to select again? [y]/n ")
             if re_select!='n':
                 not_found=True
+                ROI_list=None #reset ROI to call get_ROI again
             else:
                 not_found=False
         else:
@@ -435,6 +439,7 @@ def select_map_ROI(data_dir,map_kind,frame,ROI_list=None):
     return [ROI_data_list,ROI_list]
 
 def avg_ROI_major_axis(ROI_data):
+    """average data along the major axis of the ROI"""
 
     #get principal axis
     r,c=ROI_data[0].shape
@@ -526,7 +531,7 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
                     else:
                         ax.plot(traj['x'],traj['y'],lw=lw,ls='-',color=color_list[track%7])
                         ax.plot(traj['x'].values[-1],traj['y'].values[-1],ms=ms,marker='.',color=color_list[track%7])                       
-                    ax.axis([xmin, ymin, xmax, ymax])
+                    ax.axis([xmin,xmax,ymin,ymax])
     if display:
     	plt.show()
     	return                
@@ -570,7 +575,7 @@ def plot_div(df,frame,data_dir,no_bkg=False,vlim=None):
     [vmin,vmax]= [div_masked.min(),div_masked.max()] if vlim is None else vlim
     cmap=cm.plasma; cmap.set_bad('w',alpha=0) #set NAN transparent
     C=ax.pcolormesh(X[1:-1,1:-1],Y[1:-1,1:-1],div_masked[1:-1,1:-1],cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
-    ax.axis([xmin, ymin, xmax, ymax])
+    ax.axis([xmin,xmax,ymin,ymax])
     filename=osp.join(plot_dir,'%04d.png'%int(frame))
     fig.savefig(filename, dpi=300)
     close()
@@ -590,7 +595,7 @@ def plot_mean_vel(df,frame,data_dir,no_bkg=False,vlim=None):
     [vmin,vmax]= [mean_vel_masked.min(),mean_vel_masked.max()] if vlim is None else vlim
     cmap=cm.plasma; cmap.set_bad('w',alpha=0) #set NAN transparent
     C=ax.pcolormesh(X,Y,mean_vel_masked,cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
-    ax.axis([xmin, ymin, xmax, ymax])
+    ax.axis([xmin,xmax,ymin,ymax])
     filename=osp.join(plot_dir,'%04d.png'%int(frame))
     fig.savefig(filename, dpi=300)
     close()
@@ -615,7 +620,7 @@ def plot_z_flow(df,frame,data_dir,no_bkg=False,vlim=None):
     [vmin,vmax]= [flow.min(),flow.max()] if vlim is None else vlim
     cmap=cm.plasma
     C=ax.pcolormesh(X,Y,flow,cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
-    ax.axis([xmin, ymin, xmax, ymax])
+    ax.axis([xmin,xmax,ymin,ymax])
     filename=osp.join(plot_dir,'%04d.png'%int(frame))
     fig.savefig(filename, dpi=300)
     close()
@@ -705,6 +710,8 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
             map_dic[map_kind]['plot_func'](df,frame,data_dir,no_bkg,vlim)
 
 def plot_ROI_avg(df,data_dir,map_kind,frame,ROI_data_list,plot_on_map=False,plot_section=True):
+    """ Plot average data along the major axis of a map at a given frame"""
+
     close('all')
     print '\rplotting ROI average '+str(frame),
     sys.stdout.flush()
@@ -713,7 +720,7 @@ def plot_ROI_avg(df,data_dir,map_kind,frame,ROI_data_list,plot_on_map=False,plot
         os.mkdir(plot_dir)
 
     if plot_on_map:
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,image_dir=osp.join(data_dir,map_kind))
 
     plot_data={}
     for i,ROI_data in enumerate(ROI_data_list):
@@ -864,7 +871,7 @@ def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_l
     plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=4./linewidth)
 
 def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None):
-    df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=False)
+    df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
     grids=make_grid(x_grid_size,data_dir,dimensions=dimensions)
     plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize,refresh=refresh)
     if grids is not None:
@@ -875,8 +882,8 @@ def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=
             print 'z0=%f'%z0
         plot_all_maps(df,data_dir,grids,'z_flow',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,z0=z0,timescale=timescale)
 
-def avg_ROIs(data_dir,select_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True):
-    df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=False)
+def avg_ROIs(data_dir,select_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True,refresh=False):
+    df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
     map_kind=raw_input("Give the map wou want to plot your ROIs on (div,mean_vel,z_flow,vfield): ")
     plot_all_avg_ROI(df,data_dir,map_kind,select_frame=select_frame,ROI_list=ROI_list,plot_on_map=plot_on_map,plot_section=plot_section,cumulative_plot=cumulative_plot,avg_plot=avg_plot,timescale=timescale)
 
