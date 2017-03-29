@@ -130,9 +130,10 @@ def filter_by_traj_len(df,min_traj_len=1,max_traj_len=None):
             df2=pd.concat([df2,track])
     return df2
 
-def get_background(df,data_dir,frame,no_bkg=False,image_dir=None):
+def get_background(df,data_dir,frame,no_bkg=False,image_dir=None,orig=None):
     """Get image background or create white backgound if no_bkg"""
-    orig = 'lower' if image_dir is None else 'upper' #trick to plot for the first time only inverting Yaxis: not very elegant...
+    if orig is None:
+        orig = 'lower' if image_dir is None else 'upper' #trick to plot for the first time only inverting Yaxis: not very elegant...
     if image_dir is None:
         image_dir = osp.join(data_dir,'raw')
     if not osp.exists(image_dir): #check if images exist 
@@ -405,19 +406,24 @@ def get_vlim(df,compute_func,groups,data_dir,grids,show_hist=False,**kwargs):
 def get_subblock_data(X,Y,data,ROI):
     square_ROI=False
     xmin,xmax,ymin,ymax=ROI
+    print ROI
     ind=((X>=xmin) & (X<=xmax) & (Y>=ymin) & (Y<=ymax))
     x,y=meshgrid(np.unique(X[ind]),np.unique(Y[ind])) #sublock (x,y)
     if x.shape[0]==x.shape[1]:
         square_ROI=True
     dat=data[ind].reshape(*x.shape)
+    print x
+    print y
+    print dat 
     return [x,y,dat,square_ROI]
 
 def select_map_ROI(data_dir,map_kind,frame,ROI_list=None):
+    image_dir1=osp.join(data_dir,'raw')
     image_dir=osp.join(data_dir,map_kind)
     not_found=True
     while not_found:
         if ROI_list is None:
-            ROI_list=get_ROI(image_dir,frame)
+            ROI_list=get_ROI(image_dir1,frame)
         data=get_map_data(image_dir,frame)
         X=data[0];Y=data[1];data=data[-1]
         ROI_data_list=[]
@@ -720,7 +726,7 @@ def plot_ROI_avg(df,data_dir,map_kind,frame,ROI_data_list,plot_on_map=False,plot
         os.mkdir(plot_dir)
 
     if plot_on_map:
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,image_dir=osp.join(data_dir,map_kind))
+        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
 
     plot_data={}
     for i,ROI_data in enumerate(ROI_data_list):
