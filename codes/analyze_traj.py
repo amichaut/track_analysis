@@ -412,15 +412,11 @@ def get_vlim(df,compute_func,groups,data_dir,grids,show_hist=False,**kwargs):
 def get_subblock_data(X,Y,data,ROI):
     square_ROI=False
     xmin,xmax,ymin,ymax=ROI
-    print ROI
     ind=((X>=xmin) & (X<=xmax) & (Y>=ymin) & (Y<=ymax))
     x,y=meshgrid(np.unique(X[ind]),np.unique(Y[ind])) #sublock (x,y)
     if x.shape[0]==x.shape[1]:
         square_ROI=True
     dat=data[ind].reshape(*x.shape)
-    print x
-    print y
-    print dat 
     return [x,y,dat,square_ROI]
 
 def select_map_ROI(data_dir,map_kind,frame,ROI_list=None):
