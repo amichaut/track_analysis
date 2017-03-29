@@ -130,7 +130,7 @@ def filter_by_traj_len(df,min_traj_len=1,max_traj_len=None):
             df2=pd.concat([df2,track])
     return df2
 
-def get_background(df,data_dir,frame,no_bkg=False,image_dir=None,orig=None):
+def get_background(df,data_dir,frame,no_bkg=False,image_dir=None,orig=None,axis_on=False):
     """Get image background or create white backgound if no_bkg"""
     if orig is None:
         orig = 'lower' if image_dir is None else 'upper' #trick to plot for the first time only inverting Yaxis: not very elegant...
@@ -148,9 +148,15 @@ def get_background(df,data_dir,frame,no_bkg=False,image_dir=None,orig=None):
         n=im.shape[0]; m=im.shape[1]
     fig=figure(frameon=False)
     fig.set_size_inches(m/300.,n/300.)
-    ax = fig.add_axes([0, 0, 1, 1])
+    if axis_on:
+        ax = gca()
+    else: 
+        ax = fig.add_axes([0, 0, 1, 1])
     ax.imshow(im,aspect='auto',origin=orig)
-    xmin,xmax,ymin,ymax=ax.axis('off')
+    if axis_on:
+        xmin,xmax,ymin,ymax=ax.axis('on')
+    else: 
+        xmin,xmax,ymin,ymax=ax.axis('off')
     return fig,ax,xmin,ymin,xmax,ymax
 
 def make_grid(x_grid_size,data_dir,dimensions=None):
@@ -546,7 +552,7 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
     fig.savefig(filename, dpi=300)
     close('all')
 
-def plot_vfield(df,frame,data_dir,no_bkg=False,vlim=None):
+def plot_vfield(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
     """ Plot velocity field and compute avg vfield on a grid"""
     close('all')
     print '\rplotting velocity field '+str(frame),
@@ -556,16 +562,21 @@ def plot_vfield(df,frame,data_dir,no_bkg=False,vlim=None):
         os.mkdir(plot_dir)
 
     #import image
-    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg)
+    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
     data=get_map_data(plot_dir,frame)
     norm=plt.Normalize(vlim[0],vlim[1]) if vlim is not None else None
     Q=quiver(*data,units='x',cmap='plasma',norm=norm)
+
+    if axis_on:
+        ax.grid(False)
+        ax.patch.set_visible(False)
+        fig.set_tight_layout(True)
 
     filename=osp.join(plot_dir,'%04d.png'%int(frame))
     fig.savefig(filename,dpi=300)
     close()
 
-def plot_div(df,frame,data_dir,no_bkg=False,vlim=None):
+def plot_div(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
     """ Plot 2D divergence"""
     close('all')
     print '\rplotting divergence field '+str(frame),
@@ -575,18 +586,23 @@ def plot_div(df,frame,data_dir,no_bkg=False,vlim=None):
         os.mkdir(plot_dir)
 
     #import image
-    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg)
+    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
     X,Y,div=get_map_data(plot_dir,frame)
     div_masked = np.ma.array(div, mask=np.isnan(div))
     [vmin,vmax]= [div_masked.min(),div_masked.max()] if vlim is None else vlim
     cmap=cm.plasma; cmap.set_bad('w',alpha=0) #set NAN transparent
     C=ax.pcolormesh(X[1:-1,1:-1],Y[1:-1,1:-1],div_masked[1:-1,1:-1],cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
     ax.axis([xmin,xmax,ymin,ymax])
+
+    if axis_on:
+        ax.grid(False)
+        ax.patch.set_visible(False)
+        fig.set_tight_layout(True)
     filename=osp.join(plot_dir,'%04d.png'%int(frame))
     fig.savefig(filename, dpi=300)
     close()
 
-def plot_mean_vel(df,frame,data_dir,no_bkg=False,vlim=None):
+def plot_mean_vel(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
     close('all')
     print '\rplotting mean velocity '+str(frame),
     sys.stdout.flush()
@@ -595,18 +611,23 @@ def plot_mean_vel(df,frame,data_dir,no_bkg=False,vlim=None):
         os.mkdir(plot_dir)
 
     #import image
-    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg)
+    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
     X,Y,mean_vel=get_map_data(plot_dir,frame)
     mean_vel_masked = np.ma.array(mean_vel, mask=np.isnan(mean_vel))
     [vmin,vmax]= [mean_vel_masked.min(),mean_vel_masked.max()] if vlim is None else vlim
     cmap=cm.plasma; cmap.set_bad('w',alpha=0) #set NAN transparent
     C=ax.pcolormesh(X,Y,mean_vel_masked,cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
     ax.axis([xmin,xmax,ymin,ymax])
+
+    if axis_on:
+        ax.grid(False)
+        ax.patch.set_visible(False)
+        fig.set_tight_layout(True)
     filename=osp.join(plot_dir,'%04d.png'%int(frame))
     fig.savefig(filename, dpi=300)
     close()
 
-def plot_z_flow(df,frame,data_dir,no_bkg=False,vlim=None):
+def plot_z_flow(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
     """Plot the flow (defined as the net number of cells going through a surface element in the increasing z direction) through the plane of z=z0"""
     
     #Make sure these are 3D data
@@ -621,12 +642,17 @@ def plot_z_flow(df,frame,data_dir,no_bkg=False,vlim=None):
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
     
-    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg)
+    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
     X,Y,flow=get_map_data(plot_dir,frame)
     [vmin,vmax]= [flow.min(),flow.max()] if vlim is None else vlim
     cmap=cm.plasma
     C=ax.pcolormesh(X,Y,flow,cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
     ax.axis([xmin,xmax,ymin,ymax])
+
+    if axis_on:
+        ax.grid(False)
+        ax.patch.set_visible(False)
+        fig.set_tight_layout(True)
     filename=osp.join(plot_dir,'%04d.png'%int(frame))
     fig.savefig(filename, dpi=300)
     close()
@@ -650,7 +676,7 @@ def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,n
         for frame in df['frame'].unique():
             plot_cells(df_list,groups_list,frame,data_dir,plot_traj,z_lim,hide_labels,no_bkg,lengthscale,length_ref)
 
-def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refresh=False):
+def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refresh=False,axis_on=False):
     groups=df.groupby('frame')
     dim=2 if 'z' not in df.columns else 3 #2d or 3D
     plot_dir=osp.join(data_dir,'vfield')
@@ -682,9 +708,9 @@ def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refres
         Parallel(n_jobs=num_cores)(delayed(plot_vfield)(df,frame,data_dir,no_bkg,vlim) for frame in df['frame'].unique())
     else:
         for i,frame in enumerate(df['frame'].unique()):
-            plot_vfield(df,frame,data_dir,no_bkg=no_bkg,vlim=vlim)
+            plot_vfield(df,frame,data_dir,no_bkg=no_bkg,vlim=vlim,axis_on=axis_on)
 
-def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallelize=False,manual_vlim=False,**kwargs):
+def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallelize=False,manual_vlim=False,axis_on=False,**kwargs):
 
     groups=df.groupby('frame')
 
@@ -713,7 +739,7 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
         Parallel(n_jobs=num_cores)(delayed(plot_z_flow)(df,frame,data_dir,no_bkg,vlim) for frame in df['frame'].unique())
     else:
         for i,frame in enumerate(df['frame'].unique()):
-            map_dic[map_kind]['plot_func'](df,frame,data_dir,no_bkg,vlim)
+            map_dic[map_kind]['plot_func'](df,frame,data_dir,no_bkg,vlim,axis_on)
 
 def plot_ROI_avg(df,data_dir,map_kind,frame,ROI_data_list,plot_on_map=False,plot_section=True):
     """ Plot average data along the major axis of a map at a given frame"""
@@ -876,13 +902,13 @@ def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_l
     
     plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=4./linewidth)
 
-def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None):
+def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None,axis_on=False):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
     grids=make_grid(x_grid_size,data_dir,dimensions=dimensions)
-    plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize,refresh=refresh)
+    plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize,refresh=refresh,axis_on=axis_on)
     if grids is not None:
-        plot_all_maps(df,data_dir,grids,'div',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale)
-        plot_all_maps(df,data_dir,grids,'mean_vel',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,manual_vlim=True)
+        plot_all_maps(df,data_dir,grids,'div',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,axis_on=axis_on,lengthscale=lengthscale)
+        plot_all_maps(df,data_dir,grids,'mean_vel',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,manual_vlim=True,axis_on=axis_on)
         if z0 is None:
             z0= df['z_rel'].min() + (df['z_rel'].max()-df['z_rel'].min())/2.
             print 'z0=%f'%z0
