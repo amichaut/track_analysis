@@ -23,7 +23,7 @@ usage_message="""Usage: \n- plot cells analysis using cell_analysis(data_dir,ref
 plot_traj (default true) to print the cell trajectories, hide_labels (default True) to hide the cell label, no_bkg (default False) to remove the image background, linewidth being the trajectories width (default=1.0) \n
 - plot maps using map_analysis(data_dir,refresh,parallelize,x_grid_size,no_bkg,z0,dimensions,axis_on) \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
 x_grid_size: number of columns in the grid (default 10), no_bkg (default False) to remove the image background, z0: altitude of the z_flow surface (default None => center of z axis), dimensions ([row,column] default None) to give the image dimension in case of no_bkg, axis_on: display axes along maps (default False) 
-- plot average ROIs using avg_ROIs(data_dir,select_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True) \t data_dir: data directory"""
+- plot average ROIs using avg_ROIs(data_dir,frame_subset=None,select_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True) \t data_dir: data directory, frame_subset is a list [first,last], default None: open interactive choice"""
 
 
 print welcome_message
@@ -43,7 +43,7 @@ def get_cmap_color(value, colormap, vmin=None, vmax=None):
 def scale_dim(df,dimensions=['x','y','z'],timescale=1.,lengthscale=1.):
     #time
     df['t']=df['frame']*timescale
-    #length 
+    #length lengthscale px/um
     for dim in dimensions:
         df[dim+'_scaled']=df[dim]/lengthscale
         
@@ -161,7 +161,7 @@ def get_background(df,data_dir,frame,no_bkg=False,image_dir=None,orig=None,axis_
 
 def make_grid(x_grid_size,data_dir,dimensions=None):
     """make a meshgrid. The boundaries can be passed by dimensions as [xmin,xmax,ymin,ymax] or using the raw image dimensions. x_grid_size is the number of cells in the grid along the x axis.
-	It returns two grids: the node_grid with the positions of the nodes of each cells, and the center_grid with the position of the center of each cell"""
+    It returns two grids: the node_grid with the positions of the nodes of each cells, and the center_grid with the position of the center of each cell"""
     if dimensions is None:
         raw_dir = osp.join(data_dir,'raw')
         if not osp.exists(raw_dir):
@@ -541,8 +541,8 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
                         ax.plot(traj['x'].values[-1],traj['y'].values[-1],ms=ms,marker='.',color=color_list[track%7])                       
                     ax.axis([xmin,xmax,ymin,ymax])
     if display:
-    	plt.show()
-    	return                
+        plt.show()
+        return                
 
     filename=osp.join(plot_dir,'%04d.png'%int(frame))
     fig.savefig(filename, dpi=300)
@@ -783,7 +783,7 @@ def plot_ROI_avg(df,data_dir,map_kind,frame,ROI_data_list,plot_on_map=False,plot
 
     return plot_data
 
-def plot_all_avg_ROI(df,data_dir,map_kind,select_frame=None,ROI_list=None,plot_on_map=False,plot_section=True,cumulative_plot=True,avg_plot=True,timescale=1.):
+def plot_all_avg_ROI(df,data_dir,map_kind,frame_subset=None,selection_frame=None,ROI_list=None,plot_on_map=False,plot_section=True,cumulative_plot=True,avg_plot=True,timescale=1.):
 
     close('all')
 
@@ -791,23 +791,62 @@ def plot_all_avg_ROI(df,data_dir,map_kind,select_frame=None,ROI_list=None,plot_o
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
 
-    if select_frame is None:
-        select_frame=input("Give the frame number on which you want to draw your ROIs: ")
+    if selection_frame is None:
+        selection_frame=input("Give the frame number on which you want to draw your ROIs: ")
     
-    [ROI_data_list,ROI_list]=select_map_ROI(data_dir,map_kind,select_frame,ROI_list)
+    [ROI_data_list,ROI_list]=select_map_ROI(data_dir,map_kind,selection_frame,ROI_list)
+
+    #interactive choice of subset and check if subset is valid
+    if frame_subset is None:
+        typing=True
+        while typing:
+            try:
+                frame_subset=input("Give the frame subset you want to analyze as [first,last] or unique_frame, if you want them all just press ENTER: ")
+                if type(frame_subset) is list:
+                    if frame_subset[0] in df['frame'].unique() and frame_subset[1] in df['frame'].unique():
+                        typing=False
+                    else:
+                        print "WARNING: the subset is invalid, please try again"
+                elif type(frame_subset) is int:
+                    if frame_subset in df['frame'].unique():
+                        typing=False
+                    else:
+                        print "WARNING: the subset is invalid, please try again"
+                else:
+                    print "WARNING: the subset is invalid, please try again"
+            except:
+                typing=False
+                frame_subset=None
+ 
+    elif type(frame_subset) is list:
+        if not frame_subset[0] in df['frame'].unique() or not frame_subset[1] in df['frame'].unique():
+            return "WARNING: the subset is invalid, please try again"
+    elif type(frame_subset) is int:
+        if not frame_subset in df['frame'].unique():
+            return "WARNING: the subset is invalid, please try again"
+    else:
+         return "WARNING: the subset is invalid, please try again"
+
+    # select frame_list
+    if frame_subset is None: #if no subset
+        frame_list=df['frame'].unique()
+    elif type(frame_subset) is list:
+        frame_list = range(frame_subset[0],frame_subset[1]+1)
+    elif type(frame_subset) is int:
+        frame_list = [frame_subset]
 
     plot_data_list=[]
-    for i,frame in enumerate(df['frame'].unique()):
+    for i,frame in enumerate(frame_list):
         [ROI_data_list,ROI_list]=select_map_ROI(data_dir,map_kind,frame,ROI_list)
         if i>0:
             plot_on_map=False #plot it only once
         plot_data_list.append(plot_ROI_avg(df,data_dir,map_kind,frame,ROI_data_list,plot_on_map=plot_on_map,plot_section=plot_section))
 
     if cumulative_plot:
-        time_min=df['t'].min(); time_max=df['t'].max()
+        time_min=min(frame_list)*timescale; time_max=max(frame_list)*timescale
         #colorbar
         Z = [[0,0],[0,0]]
-        levels=df['t'].unique()
+        levels=array(frame_list)*timescale
         CS3 = plt.contourf(Z, levels, cmap=cm.plasma)
         plt.clf()
         for i,ROI_data in enumerate(ROI_data_list):
@@ -816,7 +855,7 @@ def plot_all_avg_ROI(df,data_dir,map_kind,select_frame=None,ROI_list=None,plot_o
             title=plot_data_list[0][str(i)]['title'];xlab=plot_data_list[0][str(i)]['xlab']
             fig, ax = plt.subplots(1, 1)
             for j in range(len(x_data_l)):
-                time=df['frame'].unique()[j]*timescale
+                time=frame_list[j]*timescale
                 ax.plot(x_data_l[j],y_data_l[j],color=get_cmap_color(time, cm.plasma, vmin=time_min, vmax=time_max))
             ax.set_title(title)
             ax.set_xlabel(xlab)
@@ -910,10 +949,10 @@ def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=
             print 'z0=%f'%z0
         plot_all_maps(df,data_dir,grids,'z_flow',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,z0=z0,timescale=timescale)
 
-def avg_ROIs(data_dir,select_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True,refresh=False):
+def avg_ROIs(data_dir,frame_subset=None,selection_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True,refresh=False):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
     map_kind=raw_input("Give the map wou want to plot your ROIs on (div,mean_vel,z_flow,vfield): ")
-    plot_all_avg_ROI(df,data_dir,map_kind,select_frame=select_frame,ROI_list=ROI_list,plot_on_map=plot_on_map,plot_section=plot_section,cumulative_plot=cumulative_plot,avg_plot=avg_plot,timescale=timescale)
+    plot_all_avg_ROI(df,data_dir,map_kind,frame_subset=frame_subset,selection_frame=selection_frame,ROI_list=ROI_list,plot_on_map=plot_on_map,plot_section=plot_section,cumulative_plot=cumulative_plot,avg_plot=avg_plot,timescale=timescale)
 
 def traj_plot(data_dir):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=False)
