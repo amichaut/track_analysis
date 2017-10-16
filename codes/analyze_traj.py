@@ -18,12 +18,12 @@ plt.style.use('ggplot') # Make the graphs a bit prettier
 
 color_list=[c['color'] for c in list(plt.rcParams['axes.prop_cycle'])]
 
-welcome_message="""\n\n WELCOME TO TRACK_ANALYSIS \n Developped and maintained by Arthur Michaut: arthur.michaut@gmail.com \n Released on 03-29-2017\n\n\n     _''_\n    / o  \\\n  <       |\n    \\    /__\n    /       \\-----\n    /    \\    \\   \\__\n    |     \\_____\\  __>\n     \\--       ___/  \n        \\     /\n         || ||\n         /\\ /\\\n\n"""
+welcome_message="""\n\n WELCOME TO TRACK_ANALYSIS \n Developped and maintained by Arthur Michaut: arthur.michaut@gmail.com \n Released on 10-14-2017\n\n\n     _''_\n    / o  \\\n  <       |\n    \\    /__\n    /       \\-----\n    /    \\    \\   \\__\n    |     \\_____\\  __>\n     \\--       ___/  \n        \\     /\n         || ||\n         /\\ /\\\n\n"""
 usage_message="""Usage: \n- plot cells analysis using cell_analysis(data_dir,refresh,parallelize,plot_traj,hide_labels,no_bkg,linewidth) \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
 plot_traj (default true) to print the cell trajectories, hide_labels (default True) to hide the cell label, no_bkg (default False) to remove the image background, linewidth being the trajectories width (default=1.0) \n
 - plot maps using map_analysis(data_dir,refresh,parallelize,x_grid_size,no_bkg,z0,dimensions,axis_on) \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
 x_grid_size: number of columns in the grid (default 10), no_bkg (default False) to remove the image background, z0: altitude of the z_flow surface (default None => center of z axis), dimensions ([row,column] default None) to give the image dimension in case of no_bkg, axis_on: display axes along maps (default False) 
-- plot average ROIs using avg_ROIs(data_dir,frame_subset=None,select_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True) \t data_dir: data directory, frame_subset is a list [first,last], default None: open interactive choice"""
+- plot average ROIs using avg_ROIs(data_dir,frame_subset=None,selection_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True) \t data_dir: data directory, frame_subset is a list [first,last], default None: open interactive choice"""
 
 
 print welcome_message
@@ -69,6 +69,7 @@ def compute_parameters(df):
     df['z_rel']=df['z_scaled']-df['z_scaled'].mean()
     
 def get_info(data_dir):
+    """info.txt gives the lengthscale in um/px, the frame intervalle delta_t in min and the column names of the table"""
     filename=osp.join(data_dir,"info.txt")
     if osp.exists(filename):
         with open(filename) as f:
@@ -97,7 +98,8 @@ def get_data(data_dir,refresh=False):
         for inf in ['lengthscale','delta_t','columns']:
             if info[inf]==-1:
                 print "WARNING: "+inf+" not provided in info.txt"
-        lengthscale=info["lengthscale"];timescale=info["delta_t"];columns=info["columns"]
+        ## WARNING lengthscale is defined in the whole code in px/um so lengthscale=1/lengthscale
+        lengthscale=1./info["lengthscale"];timescale=info["delta_t"];columns=info["columns"]
         df=pd.DataFrame(data[:,1:],columns=columns) 
         #scale data
         dimensions=['x','y','z'] if 'z' in columns else ['x','y']
@@ -483,7 +485,7 @@ def plot_cmap(plot_dir,label,cmap,vmin,vmax):
     fig.savefig(filename, dpi=300, bbox_inches='tight')
     close('all')
 
-def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,lengthscale=4.,length_ref=4.,display=False):
+def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,lengthscale=1.,length_ref=0.75,display=False):
     """ Print the tracked pictures with updated (=relinked) tracks"""
     print '\rplotting cells '+str(frame),
     sys.stdout.flush()
@@ -522,7 +524,7 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
                 #traj size
                 lw_ref=rcParams['lines.linewidth']
                 ms_ref=rcParams['lines.markersize']
-                size_factor=lengthscale/length_ref
+                size_factor=lengthscale*length_ref
                 lw=lw_ref*size_factor; ms=ms_ref*size_factor
                 #plot trajectory
                 traj=get_obj_traj(track_groups,track,max_frame=frame)
@@ -655,7 +657,7 @@ def plot_z_flow(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
     
     return flow
 
-def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,parallelize=False,lengthscale=4.,length_ref=4.):
+def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,parallelize=False,lengthscale=1.,length_ref=0.75):
     plot_dir=osp.join(data_dir,'traj')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
@@ -935,7 +937,7 @@ def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_l
         print 'ERROR: not a valid answer'
         return
     
-    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=4./linewidth)
+    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=0.75/linewidth)
 
 def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None,axis_on=False):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)

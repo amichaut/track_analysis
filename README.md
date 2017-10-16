@@ -5,7 +5,7 @@ This codes provides different functions to analyze tracking data of cells over t
 ### What should be in the data directory ###
 
 * a 'table.txt' file containing the data of the tracking (without the columns name)
-* a 'info.txt' file containing the timestep length in min, the lengthscale in px/um and the name of the columns. Stick with the format presented in example/
+* a 'info.txt' file containing the timestep length in min, the lengthscale in um/px and the name of the columns. Stick with the format presented in example/
 * (optional) a 'raw' directory containing the pictures of the movie. Only 'png' format and labeled with a four-digit number starting at 0 (ie. as 0000.png for the first one)
 
 ### How do I run the code ###
