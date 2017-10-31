@@ -3,7 +3,7 @@ import pandas as pd
 import skimage
 from skimage import io
 from skimage import draw as dr
-from skimage.viewer.canvastools import RectangleTool
+from skimage.viewer.canvastools import RectangleTool, LineTool
 from skimage.viewer import ImageViewer
 import os.path as osp
 import os
@@ -313,12 +313,12 @@ def compute_z_flow(df,frame,groups,data_dir,grids,z0,timescale):
 
     return data
 
-def get_rect_coord(extents):
-    """Small function used by get_ROI"""
+def get_coord(extents):
+    """Small function used by skimage viewer"""
     global viewer,coord_list
     coord_list.append(extents)
 
-def get_ROI(image_dir,frame):
+def get_ROI(image_dir,frame,tool=RectangleTool):
     """Interactive function used to get ROIs coordinates of a given image"""
     global viewer,coord_list
 
@@ -329,7 +329,7 @@ def get_ROI(image_dir,frame):
     while selecting:
         viewer = ImageViewer(im)
         coord_list = []
-        rect_tool = RectangleTool(viewer, on_enter=get_rect_coord) 
+        rect_tool = tool(viewer, on_enter=get_coord) 
         print "Draw your selections, press ENTER to validate one and close the window when you are finished"
         viewer.show()
         print 'You have selected %d ROIs'%len(coord_list)
@@ -344,7 +344,7 @@ def filter_by_ROI(df,data_dir):
     subdf_list=[]
     frame=input('Give the frame number at which you want to make your selection: ')
     image_dir=osp.join(data_dir,'raw')
-    ROI_list=get_ROI(image_dir,frame)
+    ROI_list=get_ROI(image_dir,frame,tool=RectangleTool)
     for ROI in ROI_list:
         xmin,xmax,ymin,ymax=ROI
         ind=((df['frame']==frame) & (df['x']>=xmin) & (df['x']<=xmax) & (df['y']>=ymin) & (df['y']<=ymax))
@@ -427,7 +427,7 @@ def select_map_ROI(data_dir,map_kind,frame,ROI_list=None):
     not_found=True
     while not_found:
         if ROI_list is None:
-            ROI_list=get_ROI(image_dir1,frame)
+            ROI_list=get_ROI(image_dir1,frame,tool=RectangleTool)
         data=get_map_data(image_dir,frame)
         X=data[0];Y=data[1];data=data[-1]
         ROI_data_list=[]
@@ -468,6 +468,74 @@ def avg_ROI_major_axis(ROI_data):
 
     return {'data':avg_data,'major_ax':major_ax}
 
+def compute_XY_flow(df,line,orientation,window_size,frame,groups,data_dir,timescale,lengthscale):
+    """Compute the flow along the surface define a XY line. The first end of the line is x=0 for the plot. The cells crossing the line along the orientation (from first point to second) are counted
+    as positive cells, the cells in the other are counted as negative. The count is integrated along a moving window along the line"""
+
+    print '\rcomputing XY flow '+str(frame),
+    sys.stdout.flush()
+    #Make sure these are 3D data
+    # if 'z' not in df.columns:
+    #     print "Not a 3D set of data"
+    #     return
+
+    plot_dir=osp.join(data_dir,'XY_flow')
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
+
+    group=groups.get_group(frame).reset_index(drop=True)
+
+    #find intersection (beware vx is in um and coordinates in px) using formula from https://en.wikipedia.org/wiki/Line%E2%80%93line_intersection
+    x1=line[0][0];y1=line[0][1];x2=line[1][0];y2=line[1][1]
+    Ox1=orientation[0][0];Oy1=orientation[0][1];Ox2=orientation[1][0];Oy2=orientation[1][1]
+
+    for dim in ['x','y']:
+        group['displ_'+dim]=group['v'+dim]*timescale*lengthscale 
+        group[dim+'_prev']=group[dim]-group['displ_'+dim] #get previous timestep position
+    group = group[(np.isfinite(group['x_prev'])|np.isfinite(group['y_prev']))] #remove nan
+    A=x1*y2-y1*x2; B=x1-x2; C=y1-y2
+    group['intersec_denom']=B*group['displ_y'] - C*group['displ_x']
+    group['intersec_x']=(A*group['displ_x']-B*(group['x']*group['y_prev']-group['y']*group['x_prev']))/group['intersec_denom']
+    group['intersec_y']=(A*group['displ_y']-C*(group['x']*group['y_prev']-group['y']*group['x_prev']))/group['intersec_denom']
+
+    #check if crossing line 
+    group['intersec_vecx']=group['intersec_x']-group['x_prev']#vector I-x between intersection and previous point
+    group['intersec_vecy']=group['intersec_y']-group['y_prev']
+    group['converging']=group['intersec_vecx']*group['displ_x']+group['intersec_vecy']*group['displ_y'] #scalar product between (I-x) and displacement vectors. 
+    group=group[group['converging']>0] #if >0 converging towards line. If not discard because crossing is impossible
+    group['crossing']=group['displ_x']**2+group['displ_y']**2/(group['intersec_vecx']**2+group['intersec_vecy']**2) #|displ|^2/|I-x|^2
+    group=group[group['crossing']>=1] #if displacement > distance to surface
+
+    #compute orientation
+    group['orientation']=group['displ_x']*(Ox2-Ox1)+group['displ_y']*(Oy2-Oy1) #scalar product between O and displ
+    group['orientation']=group['orientation'].apply(lambda x:1 if x>0 else -1)
+
+    #compute distance to line end
+    group['line_abscissa']=np.sqrt((group['intersec_x']-x1**2)+(group['intersec_y']-y1**2))
+
+def rolling_func(data,func=np.sum,window_size=None):
+    """Compute the rolling sum using the x data to compute the window. Data: np.array"""
+    if window_size is None:
+        return data
+    elif data[-1,0]-data[0,0]<window_size:
+        print "window_size is too large"
+        return data
+
+    i=0
+    win_first_ind=0
+    new_x=[]
+    new_y=[]
+    while i<data.shape[0]-2:
+        print win_first_ind,i,data[i,0]
+        while data[i+1,0]-data[win_first_ind,0]<= window_size: #filling by right
+                i+=1
+        new_x.append(np.mean(data[win_first_ind:i+1,0]))
+        new_y.append(func(data[win_first_ind:i+1,1]))
+        while data[i+1,0]-data[win_first_ind,0]>window_size: #removing by left
+            win_first_ind+=1
+
+    new_x=np.array(new_x);new_y=np.array(new_y)
+    return np.concatenate((new_x[:,None],new_y[:,None]),axis=1)
 
 #################################################################
 ###########   PLOT METHODS   ####################################
