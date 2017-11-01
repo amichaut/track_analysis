@@ -13,6 +13,7 @@ import pickle
 import multiprocessing
 from joblib import Parallel, delayed
 import seaborn as sns
+import datetime
 
 plt.style.use('ggplot') # Make the graphs a bit prettier
 
@@ -322,7 +323,14 @@ def get_ROI(image_dir,frame,tool=RectangleTool):
     """Interactive function used to get ROIs coordinates of a given image"""
     global viewer,coord_list
 
+    if type(frame) not in [int,float]:
+        print "ERROR the given frame is not a number"
+        return -1
+
     filename=osp.join(image_dir,'%04d.png'%int(frame))
+    if osp.exists(filename) is False:
+        print "ERROR the image does not exist for the given frame"
+        return -1
     im = io.imread(filename)
 
     selecting=True
@@ -422,7 +430,11 @@ def get_subblock_data(X,Y,data,ROI):
     return [x,y,dat,square_ROI]
 
 def select_map_ROI(data_dir,map_kind,frame,ROI_list=None):
+    """Get data from a map in rectangular ROIs. If ROIs not given, manually drawn with get_ROI."""
     image_dir1=osp.join(data_dir,'raw')
+    if osp.isdir(image_dir1)==False:
+        image_dir1=osp.join(data_dir,map_kind)
+
     image_dir=osp.join(data_dir,map_kind)
     not_found=True
     while not_found:
@@ -468,20 +480,12 @@ def avg_ROI_major_axis(ROI_data):
 
     return {'data':avg_data,'major_ax':major_ax}
 
-def compute_XY_flow(df,line,orientation,window_size,frame,groups,data_dir,timescale,lengthscale):
-    """Compute the flow along the surface define a XY line. The first end of the line is x=0 for the plot. The cells crossing the line along the orientation (from first point to second) are counted
+def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,timescale=1.,lengthscale=1.,z_depth=None):
+    """Compute the flow along the surface defined by a XY line. The first end of the line is x=0 for the plot. The cells crossing the line along the orientation (from first point to second) are counted
     as positive cells, the cells in the other are counted as negative. The count is integrated along a moving window along the line"""
 
     print '\rcomputing XY flow '+str(frame),
     sys.stdout.flush()
-    #Make sure these are 3D data
-    # if 'z' not in df.columns:
-    #     print "Not a 3D set of data"
-    #     return
-
-    plot_dir=osp.join(data_dir,'XY_flow')
-    if osp.isdir(plot_dir)==False:
-        os.mkdir(plot_dir)
 
     group=groups.get_group(frame).reset_index(drop=True)
 
@@ -493,10 +497,16 @@ def compute_XY_flow(df,line,orientation,window_size,frame,groups,data_dir,timesc
         group['displ_'+dim]=group['v'+dim]*timescale*lengthscale 
         group[dim+'_prev']=group[dim]-group['displ_'+dim] #get previous timestep position
     group = group[(np.isfinite(group['x_prev'])|np.isfinite(group['y_prev']))] #remove nan
+
+    #calculate coordinates of point (I) of intersection between line and displacement vector
     A=x1*y2-y1*x2; B=x1-x2; C=y1-y2
     group['intersec_denom']=B*group['displ_y'] - C*group['displ_x']
-    group['intersec_x']=(A*group['displ_x']-B*(group['x']*group['y_prev']-group['y']*group['x_prev']))/group['intersec_denom']
-    group['intersec_y']=(A*group['displ_y']-C*(group['x']*group['y_prev']-group['y']*group['x_prev']))/group['intersec_denom']
+    group['intersec_x']=(A*group['displ_x']-B*(group['x']*group['y_prev']-group['y']*group['x_prev']))/group['intersec_denom']#intesection x_coord
+    group['intersec_y']=(A*group['displ_y']-C*(group['x']*group['y_prev']-group['y']*group['x_prev']))/group['intersec_denom']#intesection y_coord
+
+    # #check if I on line
+    ind=((group['intersec_x']>=min(x1,x2)) & (group['intersec_x']<=max(x1,x2)) & (group['intersec_y']>=min(y1,y2))&(group['intersec_y']<=max(y1,y2)))
+    group=group[ind]
 
     #check if crossing line 
     group['intersec_vecx']=group['intersec_x']-group['x_prev']#vector I-x between intersection and previous point
@@ -511,9 +521,22 @@ def compute_XY_flow(df,line,orientation,window_size,frame,groups,data_dir,timesc
     group['orientation']=group['orientation'].apply(lambda x:1 if x>0 else -1)
 
     #compute distance to line end
-    group['line_abscissa']=np.sqrt((group['intersec_x']-x1**2)+(group['intersec_y']-y1**2))
+    group['line_abscissa']=np.sqrt((group['intersec_x']-x1)**2+(group['intersec_y']-y1)**2)
 
-def rolling_func(data,func=np.sum,window_size=None):
+    #return data
+    data=group[['line_abscissa','orientation']].values
+    if data.shape[0]==0:
+        return data
+    data[:,0]/=lengthscale #rescale data in um
+    data=rolling_func_on_xdata(data,np.sum,window_size)
+    if window_size is not None:
+        window_area=window_size*z_depth if z_depth is not None else window_size
+        data[:,1]/=(timescale*window_area)
+    else:
+        data[:,1]/=timescale
+    return data
+
+def rolling_func_on_xdata(data,func=np.sum,window_size=None):
     """Compute the rolling sum using the x data to compute the window. Data: np.array"""
     if window_size is None:
         return data
@@ -526,7 +549,6 @@ def rolling_func(data,func=np.sum,window_size=None):
     new_x=[]
     new_y=[]
     while i<data.shape[0]-2:
-        print win_first_ind,i,data[i,0]
         while data[i+1,0]-data[win_first_ind,0]<= window_size: #filling by right
                 i+=1
         new_x.append(np.mean(data[win_first_ind:i+1,0]))
@@ -536,6 +558,48 @@ def rolling_func(data,func=np.sum,window_size=None):
 
     new_x=np.array(new_x);new_y=np.array(new_y)
     return np.concatenate((new_x[:,None],new_y[:,None]),axis=1)
+
+def select_frame_list(df,frame_subset=None):
+    """Make a list of frame list with interactive input if needed. frame_subset can be a number a list [first,last_included] or None for interactive"""
+    if frame_subset is None:
+        typing=True
+        while typing:
+            try:
+                frame_subset=input("Give the frame subset you want to analyze as [first,last] or unique_frame, if you want them all just press ENTER: ")
+                if type(frame_subset) is list:
+                    if frame_subset[0] in df['frame'].unique() and frame_subset[1] in df['frame'].unique():
+                        typing=False
+                    else:
+                        print "WARNING: the subset is invalid, please try again"
+                elif type(frame_subset) is int:
+                    if frame_subset in df['frame'].unique():
+                        typing=False
+                    else:
+                        print "WARNING: the subset is invalid, please try again"
+                else:
+                    print "WARNING: the subset is invalid, please try again"
+            except:
+                typing=False
+                frame_subset=None
+ 
+    elif type(frame_subset) is list:
+        if not frame_subset[0] in df['frame'].unique() or not frame_subset[1] in df['frame'].unique():
+            return "WARNING: the subset is invalid, please try again"
+    elif type(frame_subset) is int:
+        if not frame_subset in df['frame'].unique():
+            return "WARNING: the subset is invalid, please try again"
+    else:
+         return "WARNING: the subset is invalid, please try again"
+
+    # select frame_list
+    if frame_subset is None: #if no subset
+        frame_list=df['frame'].unique()
+    elif type(frame_subset) is list:
+        frame_list = range(frame_subset[0],frame_subset[1]+1)
+    elif type(frame_subset) is int:
+        frame_list = [frame_subset]
+    return frame_list
+
 
 #################################################################
 ###########   PLOT METHODS   ####################################
@@ -725,6 +789,99 @@ def plot_z_flow(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
     
     return flow
 
+def plot_ROI_avg(df,data_dir,map_kind,frame,ROI_data_list,plot_on_map=False,plot_section=True):
+    """ Plot average data along the major axis of a map at a given frame"""
+
+    close('all')
+    print '\rplotting ROI average '+str(frame),
+    sys.stdout.flush()
+    plot_dir=osp.join(data_dir,map_kind,'ROI_avg')
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
+
+    if plot_on_map:
+        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+
+    plot_data={}
+    for i,ROI_data in enumerate(ROI_data_list):
+        avg=avg_ROI_major_axis(ROI_data)
+        if plot_on_map:
+            ax.plot(avg['data'][0],avg['data'][1],color=color_list[i])
+        fig2, ax2 = plt.subplots(1, 1)
+        if avg['major_ax']==0:
+            x_data=avg['data'][1]
+            title='x = %d px'%avg['data'][0][0]
+            xlab='y (px)'
+        elif avg['major_ax']==1:
+            x_data=avg['data'][0]
+            title='y = %d px'%avg['data'][1][0]
+            xlab='x (px)'
+        
+        filename_prefix=osp.join(plot_dir,'ROI_%d-%d-%d-%d'%(avg['data'][0].min(),avg['data'][0].max(),avg['data'][1].min(),avg['data'][1].max()))
+        plot_data[str(i)]={'x_data':x_data,'y_data':avg['data'][2],'title':title,'xlab':xlab,'filename_prefix':filename_prefix}
+        
+        if plot_section:
+            ax2.plot(x_data,avg['data'][2])
+            ax2.set_title(title)
+            ax2.set_xlabel(xlab)
+            ax2.set_ylabel(map_dic[map_kind]['cmap_label'])
+            filename=filename_prefix+'_frame_%04d.png'%frame
+            fig2.savefig(filename,dpi=300,bbox_inches='tight')
+
+    if plot_on_map:
+        filename=osp.join(plot_dir,'sections_'+datetime.datetime.now().strftime("%Y%m%d_%H%M%S")+'.png') #filename with the time to get a specific name not to overwrite the different sections files
+        fig.savefig(filename,dpi=300,bbox_inches='tight')
+        close()
+
+    return plot_data
+
+def plot_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,timescale=1.,lengthscale=1.,z_depth=None,plot_on_map=False):
+    """Plot the flow along the surface defined by a XY line. The first end of the line is x=0 for the plot. The cells crossing the line along the orientation (from first point to second) are counted
+    as positive cells, the cells in the other are counted as negative. The count is integrated along a moving window along the line (line in um)"""
+    close('all')
+
+    plot_dir=osp.join(data_dir,'XY_flow')
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
+
+    image_dir=osp.join(data_dir,'raw')
+    if osp.isdir(image_dir)==False:
+        image_dir=osp.join(data_dir,'traj')
+
+    data=compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=window_size,timescale=timescale,lengthscale=lengthscale,z_depth=z_depth)
+
+    title='line_%d-%d_%d-%d'%(line[0][0],line[0][1],line[1][0],line[1][1])
+    xlab=r'x ($\mu m$)'
+    if window_size is not None:
+        ylab=r'flow ($cells.\mu m^{-2}.min^{-1}$)' if z_depth is not None else r'flow ($cells.\mu m^{-1}.min^{-1}$)'
+    else:
+        ylab=r'flow ($cells.min^{-1}$)'
+    filename_prefix=osp.join(plot_dir,'line_%d-%d_%d-%d'%(line[0][0],line[0][1],line[1][0],line[1][1]))
+    plot_data={'x_data':data[:,0],'y_data':data[:,1],'title':title,'xlab':xlab,'ylab':ylab,'filename_prefix':filename_prefix}
+    
+    fig, ax = plt.subplots(1, 1)
+    ax.plot(data[:,0],data[:,1])
+    ax.set_title(title)
+    ax.set_xlabel(xlab)
+    ax.set_ylabel(ylab)
+    filename=filename_prefix+'_frame_%04d.png'%frame
+    fig.savefig(filename,dpi=300,bbox_inches='tight')
+    close()
+
+    if plot_on_map:
+        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        ax.plot(line[:,0],line[:,1])
+        ax.arrow(orientation[0,0],orientation[0,1],orientation[1,0]-orientation[0,0],orientation[1,1]-orientation[0,1],shape='full',length_includes_head=True,width=10,color='k')
+        filename=osp.join(plot_dir,filename_prefix+'section.png')
+        fig.savefig(filename,dpi=300,bbox_inches='tight')
+        close()
+
+    return plot_data
+
+
+#### PLOT_ALL methods
+
+
 def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,parallelize=False,lengthscale=1.,length_ref=0.75):
     plot_dir=osp.join(data_dir,'traj')
     if osp.isdir(plot_dir)==False:
@@ -807,52 +964,6 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
         for i,frame in enumerate(df['frame'].unique()):
             map_dic[map_kind]['plot_func'](df,frame,data_dir,no_bkg,vlim,axis_on)
 
-def plot_ROI_avg(df,data_dir,map_kind,frame,ROI_data_list,plot_on_map=False,plot_section=True):
-    """ Plot average data along the major axis of a map at a given frame"""
-
-    close('all')
-    print '\rplotting ROI average '+str(frame),
-    sys.stdout.flush()
-    plot_dir=osp.join(data_dir,map_kind,'ROI_avg')
-    if osp.isdir(plot_dir)==False:
-        os.mkdir(plot_dir)
-
-    if plot_on_map:
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
-
-    plot_data={}
-    for i,ROI_data in enumerate(ROI_data_list):
-        avg=avg_ROI_major_axis(ROI_data)
-        if plot_on_map:
-            ax.plot(avg['data'][0],avg['data'][1],color=color_list[i])
-        fig2, ax2 = plt.subplots(1, 1)
-        if avg['major_ax']==0:
-            x_data=avg['data'][1]
-            title='x = %d px'%avg['data'][0][0]
-            xlab='y (px)'
-        elif avg['major_ax']==1:
-            x_data=avg['data'][0]
-            title='y = %d px'%avg['data'][1][0]
-            xlab='x (px)'
-        
-        filename_prefix=osp.join(plot_dir,'ROI_%d-%d-%d-%d'%(avg['data'][0].min(),avg['data'][0].max(),avg['data'][1].min(),avg['data'][1].max()))
-        plot_data[str(i)]={'x_data':x_data,'y_data':avg['data'][2],'title':title,'xlab':xlab,'filename_prefix':filename_prefix}
-        
-        if plot_section:
-            ax2.plot(x_data,avg['data'][2])
-            ax2.set_title(title)
-            ax2.set_xlabel(xlab)
-            ax2.set_ylabel(map_dic[map_kind]['cmap_label'])
-            filename=filename_prefix+'_frame_%04d.png'%frame
-            fig2.savefig(filename,dpi=300,bbox_inches='tight')
-
-    if plot_on_map:
-        filename=osp.join(plot_dir,'sections_%04d.png'%frame)
-        fig.savefig(filename,dpi=300)
-        close()
-
-    return plot_data
-
 def plot_all_avg_ROI(df,data_dir,map_kind,frame_subset=None,selection_frame=None,ROI_list=None,plot_on_map=False,plot_section=True,cumulative_plot=True,avg_plot=True,timescale=1.):
 
     close('all')
@@ -866,44 +977,7 @@ def plot_all_avg_ROI(df,data_dir,map_kind,frame_subset=None,selection_frame=None
     
     [ROI_data_list,ROI_list]=select_map_ROI(data_dir,map_kind,selection_frame,ROI_list)
 
-    #interactive choice of subset and check if subset is valid
-    if frame_subset is None:
-        typing=True
-        while typing:
-            try:
-                frame_subset=input("Give the frame subset you want to analyze as [first,last] or unique_frame, if you want them all just press ENTER: ")
-                if type(frame_subset) is list:
-                    if frame_subset[0] in df['frame'].unique() and frame_subset[1] in df['frame'].unique():
-                        typing=False
-                    else:
-                        print "WARNING: the subset is invalid, please try again"
-                elif type(frame_subset) is int:
-                    if frame_subset in df['frame'].unique():
-                        typing=False
-                    else:
-                        print "WARNING: the subset is invalid, please try again"
-                else:
-                    print "WARNING: the subset is invalid, please try again"
-            except:
-                typing=False
-                frame_subset=None
- 
-    elif type(frame_subset) is list:
-        if not frame_subset[0] in df['frame'].unique() or not frame_subset[1] in df['frame'].unique():
-            return "WARNING: the subset is invalid, please try again"
-    elif type(frame_subset) is int:
-        if not frame_subset in df['frame'].unique():
-            return "WARNING: the subset is invalid, please try again"
-    else:
-         return "WARNING: the subset is invalid, please try again"
-
-    # select frame_list
-    if frame_subset is None: #if no subset
-        frame_list=df['frame'].unique()
-    elif type(frame_subset) is list:
-        frame_list = range(frame_subset[0],frame_subset[1]+1)
-    elif type(frame_subset) is int:
-        frame_list = [frame_subset]
+    frame_list=select_frame_list(df,frame_subset)
 
     plot_data_list=[]
     for i,frame in enumerate(frame_list):
@@ -950,38 +1024,72 @@ def plot_all_avg_ROI(df,data_dir,map_kind,frame_subset=None,selection_frame=None
             fig.savefig(filename,dpi=300,bbox_inches='tight')
             close()
 
-def plot_superimposed_traj(df,data_dir,traj_list,center_origin=True,fn_end=''):
-    """ Plot a set of trajectories without any background. If center_origin all first points are located in the center"""
+def plot_all_XY_flow(df,data_dir,line=None,orientation=None,frame_subset=None,window_size=None,selection_frame=None,timescale=1.,lengthscale=1.,z_depth=None):
+    """Plot the flow through a vertical surface define by a XY line (the first point of line is the start of the abscissa axis). 
+    The orientation of the flow is given by the orientation vector (pointing towards the 2nd point). If line and orientations are not given they are manually drawn with get_ROI"""
+
     close('all')
-    
-    track_groups=df.groupby(['traj'])
 
-    if center_origin:
-        for i,traj_id in enumerate(traj_list):
-            traj=get_obj_traj(track_groups,traj_id)
-            if i==0:
-                minx=traj['x'].min(); maxx=traj['x'].max(); miny=traj['y'].min(); maxy=traj['y'].max()
-            else:
-                minx=traj['x'].min() if traj['x'].min()<minx else minx
-                maxx=traj['x'].max() if traj['x'].max()>maxx else maxx
-                miny=traj['y'].min() if traj['y'].min()<miny else miny
-                maxy=traj['y'].max() if traj['y'].max()>maxy else maxy
-                midx=minx+(maxx-minx)/2.
-                midy=miny+(maxy-miny)/2.
+    #get parameters
+    plot_dir=osp.join(data_dir,'XY_flow')
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
 
-    fig,ax=plt.subplots(1,1)
-    ax.axis('off')
-    for i,traj_id in enumerate(traj_list):
-        traj=get_obj_traj(track_groups,traj_id)
-        traj_length = traj.shape[0]
-        if center_origin:
-            traj['x']=traj['x']-midx; traj['y']=traj['y']-midy
-        ax.plot(traj['x'],traj['y'],ls='-',color=color_list[i%7])
-        ax.plot(traj.loc[traj_length,'x'],traj.loc[traj_length,'y'],ls='none',marker='.',c='k')
-    centered='centered' if center_origin else ''
-    filename=osp.join(data_dir,'superimposed'+fn_end+centered+'.svg')
-    fig.savefig(filename, dpi=300)
-    close(fig)
+    image_dir=osp.join(data_dir,'raw')
+    if osp.isdir(image_dir)==False:
+        image_dir=osp.join(data_dir,'traj')
+
+
+    if line is None and orientation is None:
+        if selection_frame is None:
+            selection_frame=input("Give the frame number on which you want to draw your ROIs: ")
+        print "Draw two lines (and press ENTER to validate each one of them). \n The first defines your vertical surface (the first point will be the origin of the plot). The second needs to be approximatively perpendicular to the first one. It gives the orientation to the flow (going from the first point to the 2nd)"
+        line,orientation=get_ROI(image_dir,selection_frame,tool=LineTool) #lines coordinates are given 2nd point first and 1st point second
+        line=line[::-1,:]; orientation=orientation[::-1,:] #flip order of points coordinates 
+
+    #plot data
+    frame_list=select_frame_list(df,frame_subset)
+    groups=df.groupby('frame')
+
+    plot_data_list=[]
+    for i,frame in enumerate(frame_list):
+        plot_on_map=True if i==0 else False #plot on map only once
+        plot_data_list.append(plot_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=window_size,timescale=timescale,lengthscale=lengthscale,z_depth=z_depth,plot_on_map=plot_on_map))
+
+    #cumulative plot
+    time_min=min(frame_list)*timescale; time_max=max(frame_list)*timescale
+    #colorbar
+    Z = [[0,0],[0,0]]
+    levels=array(frame_list)*timescale
+    CS3 = plt.contourf(Z, levels, cmap=cm.plasma)
+    plt.clf()
+    x_data_l=[p['x_data'] for p in plot_data_list]
+    y_data_l=[p['y_data'] for p in plot_data_list]
+    fig, ax = plt.subplots(1, 1)
+    for j in range(len(x_data_l)):
+        time=frame_list[j]*timescale
+        ax.plot(x_data_l[j],y_data_l[j],color=get_cmap_color(time, cm.plasma, vmin=time_min, vmax=time_max))
+    ax.set_title(plot_data_list[0]['title'])
+    ax.set_xlabel(plot_data_list[0]['xlab'])
+    ax.set_ylabel(plot_data_list[0]['ylab'])
+    cb=fig.colorbar(CS3)
+    cb.set_label(label='time (min)')
+    filename=plot_data_list[0]['filename_prefix']+'_cumulative.png'
+    fig.savefig(filename,dpi=300,bbox_inches='tight')
+    close()
+
+    # #average plot ==> need to interpolate to average
+    # x_data=plot_data_list[0]['x_data']
+    # y_data_l=[p['y_data'] for p in plot_data_list]
+    # fig, ax = plt.subplots(1, 1)
+    # sns.tsplot(y_data_l,time=x_data,ax=ax,estimator=np.nanmean,err_style="unit_traces")
+    # ax.set_title(plot_data_list[0]['title'])
+    # ax.set_xlabel(plot_data_list[0]['xlab'])
+    # ax.set_ylabel(plot_data_list[0]['ylab'])
+    # filename=plot_data_list[0]['filename_prefix']+'_average.png'
+    # fig.savefig(filename,dpi=300,bbox_inches='tight')
+    # close()
+
 
 
 #################################################################
@@ -1024,6 +1132,65 @@ def avg_ROIs(data_dir,frame_subset=None,selection_frame=None,ROI_list=None,plot_
     map_kind=raw_input("Give the map wou want to plot your ROIs on (div,mean_vel,z_flow,vfield): ")
     plot_all_avg_ROI(df,data_dir,map_kind,frame_subset=frame_subset,selection_frame=selection_frame,ROI_list=ROI_list,plot_on_map=plot_on_map,plot_section=plot_section,cumulative_plot=cumulative_plot,avg_plot=avg_plot,timescale=timescale)
 
+def XY_flow(data_dir,window_size=None,refresh=False,line=None,orientation=None,frame_subset=None,selection_frame=None,z_depth=None):
+    df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
+    
+    if z_depth is None:
+        z_lim=[df['z_rel'].min(),df['z_rel'].max()] if dim==3 else []
+        z_depth=None if len(z_lim)==0 else z_lim[1]-z_lim[0]
+
+    if window_size is None:
+        window_size=input("Give the window size you want to calculate the flow on (in um): ")
+    
+    plot_all_XY_flow(df,data_dir,line=line,orientation=orientation,frame_subset=frame_subset,window_size=window_size,selection_frame=selection_frame,timescale=timescale,lengthscale=lengthscale,z_depth=z_depth)
+
+
+
+###############################################
+
+map_dic={'div':{'compute_func':compute_div,'plot_func':plot_div,'cmap_label':'$div(\overrightarrow{v})\ (min^{-1})$'},
+     'mean_vel':{'compute_func':compute_mean_vel,'plot_func':plot_mean_vel,'cmap_label':'$v\ (\mu m.min^{-1})$'},
+     'z_flow':{'compute_func':compute_z_flow,'plot_func':plot_z_flow,'cmap_label':'cell flow $(min^{-1})$'},
+     'vfield':{'compute_func':compute_vfield,'plot_func':plot_vfield,'cmap_label':'$v_z\ (\mu m.min^{-1})$'}}
+
+
+###############################################
+########### IDEAS FOR THE FUTURE ##############
+###############################################
+
+def plot_superimposed_traj(df,data_dir,traj_list,center_origin=True,fn_end=''):
+    """ Plot a set of trajectories without any background. If center_origin all first points are located in the center"""
+    close('all')
+    
+    track_groups=df.groupby(['traj'])
+
+    if center_origin:
+        for i,traj_id in enumerate(traj_list):
+            traj=get_obj_traj(track_groups,traj_id)
+            if i==0:
+                minx=traj['x'].min(); maxx=traj['x'].max(); miny=traj['y'].min(); maxy=traj['y'].max()
+            else:
+                minx=traj['x'].min() if traj['x'].min()<minx else minx
+                maxx=traj['x'].max() if traj['x'].max()>maxx else maxx
+                miny=traj['y'].min() if traj['y'].min()<miny else miny
+                maxy=traj['y'].max() if traj['y'].max()>maxy else maxy
+                midx=minx+(maxx-minx)/2.
+                midy=miny+(maxy-miny)/2.
+
+    fig,ax=plt.subplots(1,1)
+    ax.axis('off')
+    for i,traj_id in enumerate(traj_list):
+        traj=get_obj_traj(track_groups,traj_id)
+        traj_length = traj.shape[0]
+        if center_origin:
+            traj['x']=traj['x']-midx; traj['y']=traj['y']-midy
+        ax.plot(traj['x'],traj['y'],ls='-',color=color_list[i%7])
+        ax.plot(traj.loc[traj_length,'x'],traj.loc[traj_length,'y'],ls='none',marker='.',c='k')
+    centered='centered' if center_origin else ''
+    filename=osp.join(data_dir,'superimposed'+fn_end+centered+'.svg')
+    fig.savefig(filename, dpi=300)
+    close(fig)
+
 def traj_plot(data_dir):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=False)
     traj_list=raw_input('give the list of traj you want to plot (sep: comas) if none given they will all be plotted: ')
@@ -1033,11 +1200,3 @@ def traj_plot(data_dir):
     else:
         traj_list=[int(t) for t in traj_list]
     plot_superimposed_traj(df,data_dir,traj_list)
-
-
-###############################################
-
-map_dic={'div':{'compute_func':compute_div,'plot_func':plot_div,'cmap_label':'$div(\overrightarrow{v})\ (min^{-1})$'},
-     'mean_vel':{'compute_func':compute_mean_vel,'plot_func':plot_mean_vel,'cmap_label':'$v\ (\mu m.min^{-1})$'},
-     'z_flow':{'compute_func':compute_z_flow,'plot_func':plot_z_flow,'cmap_label':'cell flow $(min^{-1})$'},
-     'vfield':{'compute_func':compute_vfield,'plot_func':plot_vfield,'cmap_label':'$v_z\ (\mu m.min^{-1})$'}}
