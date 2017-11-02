@@ -480,7 +480,7 @@ def avg_ROI_major_axis(ROI_data):
 
     return {'data':avg_data,'major_ax':major_ax}
 
-def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,timescale=1.,lengthscale=1.,z_depth=None):
+def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,timescale=1.,lengthscale=1.,z_depth=None,reg_data_bin=1.):
     """Compute the flow along the surface defined by a XY line. The first end of the line is x=0 for the plot. The cells crossing the line along the orientation (from first point to second) are counted
     as positive cells, the cells in the other are counted as negative. The count is integrated along a moving window along the line"""
 
@@ -528,7 +528,9 @@ def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,t
     if data.shape[0]==0:
         return data
     data[:,0]/=lengthscale #rescale data in um
-    data=rolling_func_on_xdata(data,np.sum,window_size)
+    abs_length = np.sqrt((line[1][0]-line[0][0])**2+(line[1][1]-line[0][1])**2)/lengthscale
+    axis_data=arange(0,abs_length)
+    data=regularized_rolling_mean(data,axis_data,window_size,reg_data_bin)
     if window_size is not None:
         window_area=window_size*z_depth if z_depth is not None else window_size
         data[:,1]/=(timescale*window_area)
@@ -536,28 +538,23 @@ def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,t
         data[:,1]/=timescale
     return data
 
-def rolling_func_on_xdata(data,func=np.sum,window_size=None):
-    """Compute the rolling sum using the x data to compute the window. Data: np.array"""
+def regularized_rolling_mean(data,axis_data,window_size=None,reg_data_bin=1.):
+    """Compute the rolling sum of a discrete set of data along a regularized axis with a step of reg_data_bin"""
     if window_size is None:
         return data
-    elif data[-1,0]-data[0,0]<window_size:
-        print "window_size is too large"
-        return data
 
-    i=0
-    win_first_ind=0
-    new_x=[]
-    new_y=[]
-    while i<data.shape[0]-2:
-        while data[i+1,0]-data[win_first_ind,0]<= window_size: #filling by right
-                i+=1
-        new_x.append(np.mean(data[win_first_ind:i+1,0]))
-        new_y.append(func(data[win_first_ind:i+1,1]))
-        while data[i+1,0]-data[win_first_ind,0]>window_size: #removing by left
-            win_first_ind+=1
+    #regularize data (fill with zeros missing data)
+    reg_data=array([axis_data,np.zeros(axis_data.shape[0])]).T
+    for i in range(data.shape[0]):
+        ind=((reg_data[:,0]>=data[i,0]) & (reg_data[:,0]<data[i,0]+reg_data_bin)) #find index in new
+        reg_data[ind,1]=data[i,1]
 
-    new_x=np.array(new_x);new_y=np.array(new_y)
-    return np.concatenate((new_x[:,None],new_y[:,None]),axis=1)
+    #rolling
+    reg_data=pd.DataFrame(reg_data,columns=list('xy'))
+    reg_data['y'].rolling(window_size).mean()
+    reg_data=reg_data[reg_data['y']!=0]
+
+    return reg_data.values
 
 def select_frame_list(df,frame_subset=None):
     """Make a list of frame list with interactive input if needed. frame_subset can be a number a list [first,last_included] or None for interactive"""
@@ -859,11 +856,15 @@ def plot_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,time
     filename_prefix=osp.join(plot_dir,'line_%d-%d_%d-%d'%(line[0][0],line[0][1],line[1][0],line[1][1]))
     plot_data={'x_data':data[:,0],'y_data':data[:,1],'title':title,'xlab':xlab,'ylab':ylab,'filename_prefix':filename_prefix}
     
+    #abscissa length 
+    abs_length = np.sqrt((line[1][0]-line[0][0])**2+(line[1][1]-line[0][1])**2)/lengthscale
+
     fig, ax = plt.subplots(1, 1)
-    ax.plot(data[:,0],data[:,1])
+    ax.scatter(data[:,0],data[:,1])
     ax.set_title(title)
     ax.set_xlabel(xlab)
     ax.set_ylabel(ylab)
+    ax.set_xlim(0,abs_length)
     filename=filename_prefix+'_frame_%04d.png'%frame
     fig.savefig(filename,dpi=300,bbox_inches='tight')
     close()
@@ -1068,7 +1069,7 @@ def plot_all_XY_flow(df,data_dir,line=None,orientation=None,frame_subset=None,wi
     fig, ax = plt.subplots(1, 1)
     for j in range(len(x_data_l)):
         time=frame_list[j]*timescale
-        ax.plot(x_data_l[j],y_data_l[j],color=get_cmap_color(time, cm.plasma, vmin=time_min, vmax=time_max))
+        ax.scatter(x_data_l[j],y_data_l[j],color=get_cmap_color(time, cm.plasma, vmin=time_min, vmax=time_max))
     ax.set_title(plot_data_list[0]['title'])
     ax.set_xlabel(plot_data_list[0]['xlab'])
     ax.set_ylabel(plot_data_list[0]['ylab'])
