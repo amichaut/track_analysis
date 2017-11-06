@@ -480,7 +480,7 @@ def avg_ROI_major_axis(ROI_data):
 
     return {'data':avg_data,'major_ax':major_ax}
 
-def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,timescale=1.,lengthscale=1.,z_depth=None,reg_data_bin=1.):
+def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,timescale=1.,lengthscale=1.,z_depth=None,reg_data_bin=1.,plot_steps=False):
     """Compute the flow along the surface defined by a XY line. The first end of the line is x=0 for the plot. The cells crossing the line along the orientation (from first point to second) are counted
     as positive cells, the cells in the other are counted as negative. The count is integrated along a moving window along the line"""
 
@@ -503,17 +503,44 @@ def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,t
     group['intersec_denom']=B*group['displ_y'] - C*group['displ_x']
     group['intersec_x']=(A*group['displ_x']-B*(group['x']*group['y_prev']-group['y']*group['x_prev']))/group['intersec_denom']#intesection x_coord
     group['intersec_y']=(A*group['displ_y']-C*(group['x']*group['y_prev']-group['y']*group['x_prev']))/group['intersec_denom']#intesection y_coord
+    if plot_steps:
+        print "all intercepts"
+        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        group.plot.scatter(x='intersec_x',y='intersec_y',ax=ax)
+        ax.plot([x1,x2],[y1,y2])
+        show(fig)
+
 
     # #check if I on line
     ind=((group['intersec_x']>=min(x1,x2)) & (group['intersec_x']<=max(x1,x2)) & (group['intersec_y']>=min(y1,y2))&(group['intersec_y']<=max(y1,y2)))
     group=group[ind]
+    if plot_steps:
+        print "on line intercepts"
+        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        group.plot.scatter(x='intersec_x',y='intersec_y',ax=ax)
+        ax.plot([x1,x2],[y1,y2])
+        show(fig)
 
     #check if crossing line 
     group['intersec_vecx']=group['intersec_x']-group['x_prev']#vector I-x between intersection and previous point
     group['intersec_vecy']=group['intersec_y']-group['y_prev']
-    group['converging']=group['intersec_vecx']*group['displ_x']+group['intersec_vecy']*group['displ_y'] #scalar product between (I-x) and displacement vectors. 
+    group['converging']=group['intersec_vecx']*group['displ_x']+group['intersec_vecy']*group['displ_y'] #scalar product between (I-x) and displacement vectors.
+    if plot_steps:
+        print "all I-x"
+        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        ax.quiver(group['x_prev'].values,group['y_prev'].values,group['intersec_vecx'].values,group['intersec_vecy'].values)
+        ax.plot([x1,x2],[y1,y2])
+        show(fig)
+
     group=group[group['converging']>0] #if >0 converging towards line. If not discard because crossing is impossible
-    group['crossing']=group['displ_x']**2+group['displ_y']**2/(group['intersec_vecx']**2+group['intersec_vecy']**2) #|displ|^2/|I-x|^2
+    if plot_steps:
+        print "converging I-x"
+        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        ax.quiver(group['x_prev'].values,group['y_prev'].values,group['intersec_vecx'].values,group['intersec_vecy'].values)
+        ax.plot([x1,x2],[y1,y2])
+        show(fig)
+
+    group['crossing']=(group['displ_x']**2+group['displ_y']**2)/(group['intersec_vecx']**2+group['intersec_vecy']**2) #|displ|^2/|I-x|^2
     group=group[group['crossing']>=1] #if displacement > distance to surface
 
     #compute orientation
@@ -525,11 +552,9 @@ def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,t
 
     #return data
     data=group[['line_abscissa','orientation']].values
-    if data.shape[0]==0:
-        return data
     data[:,0]/=lengthscale #rescale data in um
     abs_length = np.sqrt((line[1][0]-line[0][0])**2+(line[1][1]-line[0][1])**2)/lengthscale
-    axis_data=arange(0,abs_length)
+    axis_data=arange(0,abs_length,reg_data_bin)
     data=regularized_rolling_mean(data,axis_data,window_size,reg_data_bin)
     if window_size is not None:
         window_area=window_size*z_depth if z_depth is not None else window_size
@@ -547,12 +572,11 @@ def regularized_rolling_mean(data,axis_data,window_size=None,reg_data_bin=1.):
     reg_data=array([axis_data,np.zeros(axis_data.shape[0])]).T
     for i in range(data.shape[0]):
         ind=((reg_data[:,0]>=data[i,0]) & (reg_data[:,0]<data[i,0]+reg_data_bin)) #find index in new
-        reg_data[ind,1]=data[i,1]
+        reg_data[ind,1]+=data[i,1]
 
     #rolling
     reg_data=pd.DataFrame(reg_data,columns=list('xy'))
-    reg_data['y'].rolling(window_size).mean()
-    reg_data=reg_data[reg_data['y']!=0]
+    reg_data['y']=reg_data['y'].rolling(window_size,min_periods=1).mean()
 
     return reg_data.values
 
@@ -860,11 +884,15 @@ def plot_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,time
     abs_length = np.sqrt((line[1][0]-line[0][0])**2+(line[1][1]-line[0][1])**2)/lengthscale
 
     fig, ax = plt.subplots(1, 1)
-    ax.scatter(data[:,0],data[:,1])
+    if window_size is None:
+        ax.scatter(data[:,0],data[:,1])
+    else:
+        ax.plot(data[:,0],data[:,1])
     ax.set_title(title)
     ax.set_xlabel(xlab)
     ax.set_ylabel(ylab)
     ax.set_xlim(0,abs_length)
+    ax.ticklabel_format(axis='y', style='sci', scilimits=(-2,4))
     filename=filename_prefix+'_frame_%04d.png'%frame
     fig.savefig(filename,dpi=300,bbox_inches='tight')
     close()
@@ -879,9 +907,7 @@ def plot_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,time
 
     return plot_data
 
-
 #### PLOT_ALL methods
-
 
 def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,parallelize=False,lengthscale=1.,length_ref=0.75):
     plot_dir=osp.join(data_dir,'traj')
@@ -1058,6 +1084,7 @@ def plot_all_XY_flow(df,data_dir,line=None,orientation=None,frame_subset=None,wi
         plot_data_list.append(plot_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=window_size,timescale=timescale,lengthscale=lengthscale,z_depth=z_depth,plot_on_map=plot_on_map))
 
     #cumulative plot
+    abs_length = np.sqrt((line[1][0]-line[0][0])**2+(line[1][1]-line[0][1])**2)/lengthscale
     time_min=min(frame_list)*timescale; time_max=max(frame_list)*timescale
     #colorbar
     Z = [[0,0],[0,0]]
@@ -1069,27 +1096,36 @@ def plot_all_XY_flow(df,data_dir,line=None,orientation=None,frame_subset=None,wi
     fig, ax = plt.subplots(1, 1)
     for j in range(len(x_data_l)):
         time=frame_list[j]*timescale
-        ax.scatter(x_data_l[j],y_data_l[j],color=get_cmap_color(time, cm.plasma, vmin=time_min, vmax=time_max))
+        if window_size is None:
+            ax.scatter(x_data_l[j],y_data_l[j],color=get_cmap_color(time, cm.plasma, vmin=time_min, vmax=time_max))
+        else:
+            ax.plot(x_data_l[j],y_data_l[j],color=get_cmap_color(time, cm.plasma, vmin=time_min, vmax=time_max))
     ax.set_title(plot_data_list[0]['title'])
     ax.set_xlabel(plot_data_list[0]['xlab'])
     ax.set_ylabel(plot_data_list[0]['ylab'])
+    ax.set_xlim(0,abs_length)
+    ax.ticklabel_format(axis='y', style='sci', scilimits=(-2,4))
     cb=fig.colorbar(CS3)
     cb.set_label(label='time (min)')
     filename=plot_data_list[0]['filename_prefix']+'_cumulative.png'
     fig.savefig(filename,dpi=300,bbox_inches='tight')
     close()
 
-    # #average plot ==> need to interpolate to average
-    # x_data=plot_data_list[0]['x_data']
-    # y_data_l=[p['y_data'] for p in plot_data_list]
-    # fig, ax = plt.subplots(1, 1)
-    # sns.tsplot(y_data_l,time=x_data,ax=ax,estimator=np.nanmean,err_style="unit_traces")
-    # ax.set_title(plot_data_list[0]['title'])
-    # ax.set_xlabel(plot_data_list[0]['xlab'])
-    # ax.set_ylabel(plot_data_list[0]['ylab'])
-    # filename=plot_data_list[0]['filename_prefix']+'_average.png'
-    # fig.savefig(filename,dpi=300,bbox_inches='tight')
-    # close()
+    #average plot
+    if window_size is not None:
+        x_data=plot_data_list[0]['x_data']
+        fig, ax = plt.subplots(1, 1)
+        sns.tsplot(y_data_l,time=x_data,ax=ax,estimator=np.nanmean,err_style="unit_traces")
+        ax.set_title(plot_data_list[0]['title'])
+        ax.set_xlabel(plot_data_list[0]['xlab'])
+        ax.set_ylabel(plot_data_list[0]['ylab'])
+        ax.set_xlim(0,abs_length)
+        ax.ticklabel_format(axis='y', style='sci', scilimits=(-2,4))
+        filename=plot_data_list[0]['filename_prefix']+'_average.png'
+        fig.savefig(filename,dpi=300,bbox_inches='tight')
+        close()
+
+    return plot_data_list
 
 
 
@@ -1144,7 +1180,7 @@ def XY_flow(data_dir,window_size=None,refresh=False,line=None,orientation=None,f
         window_size=input("Give the window size you want to calculate the flow on (in um): ")
     
     plot_all_XY_flow(df,data_dir,line=line,orientation=orientation,frame_subset=frame_subset,window_size=window_size,selection_frame=selection_frame,timescale=timescale,lengthscale=lengthscale,z_depth=z_depth)
-
+    
 
 
 ###############################################
