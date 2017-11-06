@@ -19,7 +19,7 @@ plt.style.use('ggplot') # Make the graphs a bit prettier
 
 color_list=[c['color'] for c in list(plt.rcParams['axes.prop_cycle'])]
 
-welcome_message="""\n\n WELCOME TO TRACK_ANALYSIS \n Developped and maintained by Arthur Michaut: arthur.michaut@gmail.com \n Released on 10-14-2017\n\n\n     _''_\n    / o  \\\n  <       |\n    \\    /__\n    /       \\-----\n    /    \\    \\   \\__\n    |     \\_____\\  __>\n     \\--       ___/  \n        \\     /\n         || ||\n         /\\ /\\\n\n"""
+welcome_message="""\n\n WELCOME TO TRACK_ANALYSIS \n Developped and maintained by Arthur Michaut: arthur.michaut@gmail.com \n Last release: 10-14-2017\n\n\n     _''_\n    / o  \\\n  <       |\n    \\    /__\n    /       \\-----\n    /    \\    \\   \\__\n    |     \\_____\\  __>\n     \\--       ___/  \n        \\     /\n         || ||\n         /\\ /\\\n\n"""
 usage_message="""Usage: \n- plot cells analysis using cell_analysis(data_dir,refresh,parallelize,plot_traj,hide_labels,no_bkg,linewidth) \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
 plot_traj (default true) to print the cell trajectories, hide_labels (default True) to hide the cell label, no_bkg (default False) to remove the image background, linewidth being the trajectories width (default=1.0) \n
 - plot maps using map_analysis(data_dir,refresh,parallelize,x_grid_size,no_bkg,z0,dimensions,axis_on) \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
@@ -269,7 +269,7 @@ def compute_mean_vel(df,frame,groups,data_dir,grids):
     mean_vel=sqrt(V)
 
     #save data in pickle
-    X,Y=grids[1]
+    X,Y=grids[0]
     data=(X,Y,mean_vel)
     save_map_data(plot_dir,data,frame)
 
@@ -384,6 +384,7 @@ def get_map_data(plot_dir,frame):
     return data
 
 def get_vlim(df,compute_func,groups,data_dir,grids,show_hist=False,**kwargs):
+    # compute the max and min over all frames of a map. Compute maps for all frames
     vmin=np.nan;vmax=np.nan #boudaries of colorbar
     for i,frame in enumerate(df['frame'].unique()):
         data=compute_func(df,frame,groups,data_dir,grids,**kwargs)
@@ -704,7 +705,7 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
     fig.savefig(filename, dpi=300)
     close('all')
 
-def plot_vfield(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
+def plot_vfield(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False,plot_on_mean=False,black_arrows=False,vlim_mean=None):
     """ Plot velocity field and compute avg vfield on a grid"""
     close('all')
     print '\rplotting velocity field '+str(frame),
@@ -714,10 +715,16 @@ def plot_vfield(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
         os.mkdir(plot_dir)
 
     #import image
-    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
+    if plot_on_mean:
+        plot_fig,data_mean=plot_mean_vel(df,frame,data_dir,no_bkg=no_bkg,vlim=vlim_mean,axis_on=axis_on,save_plot=False)
+        fig,ax,xmin,ymin,xmax,ymax=plot_fig
+    else:
+        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
     data=get_map_data(plot_dir,frame)
     norm=plt.Normalize(vlim[0],vlim[1]) if vlim is not None else None
-    Q=quiver(*data,units='x',cmap='plasma',norm=norm)
+    if black_arrows:
+        data=data[:4] #remove the vz data, so no color on arrows
+    Q=ax.quiver(*data,units='x',cmap='plasma',norm=norm)
 
     if axis_on:
         ax.grid(False)
@@ -754,7 +761,7 @@ def plot_div(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
     fig.savefig(filename, dpi=300)
     close()
 
-def plot_mean_vel(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
+def plot_mean_vel(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False,save_plot=True):
     close('all')
     print '\rplotting mean velocity '+str(frame),
     sys.stdout.flush()
@@ -775,9 +782,13 @@ def plot_mean_vel(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
         ax.grid(False)
         ax.patch.set_visible(False)
         fig.set_tight_layout(True)
-    filename=osp.join(plot_dir,'%04d.png'%int(frame))
-    fig.savefig(filename, dpi=300)
-    close()
+    if save_plot:
+        filename=osp.join(plot_dir,'%04d.png'%int(frame))
+        fig.savefig(filename, dpi=300)
+
+    plot_fig=[fig,ax,xmin,ymin,xmax,ymax]
+    data=[X,Y,mean_vel,mean_vel_masked]
+    return [plot_fig,data]
 
 def plot_z_flow(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
     """Plot the flow (defined as the net number of cells going through a surface element in the increasing z direction) through the plane of z=z0"""
@@ -927,7 +938,8 @@ def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,n
         for frame in df['frame'].unique():
             plot_cells(df_list,groups_list,frame,data_dir,plot_traj,z_lim,hide_labels,no_bkg,lengthscale,length_ref)
 
-def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refresh=False,axis_on=False):
+def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refresh=False,axis_on=False,plot_on_mean=False,black_arrows=False):
+    # Maps of all frames are computed through the get_vlim function
     groups=df.groupby('frame')
     dim=2 if 'z' not in df.columns else 3 #2d or 3D
     plot_dir=osp.join(data_dir,'vfield')
@@ -945,21 +957,42 @@ def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refres
         #     vlim=get_vlim(df,compute_vfield,groups,data_dir,grids)
         #     pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
 
+        #compute data
         vlim=get_vlim(df,compute_vfield,groups,data_dir,grids)
         pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
 
     vlim=pickle.load( open(osp.join(plot_dir,'data','vlim.p'), "rb" ))
     #plot colorbar
-    if dim==3:
+    if dim==3 and not black_arrows:
         plot_cmap(plot_dir,'$v_z\ (\mu m.min^{-1})$',cm.plasma,vlim[0],vlim[1])
+
+    if plot_on_mean:
+        mean_dir=osp.join(data_dir,'mean_vel')
+        if osp.isdir(mean_dir)==False:
+            os.mkdir(mean_dir)
+
+        if osp.isdir(osp.join(mean_dir,'data')) is False:
+            refresh=True
+        if refresh:
+            #compute data
+            if parallelize:
+                num_cores = multiprocessing.cpu_count()
+                Parallel(n_jobs=num_cores)(delayed(map_dic['mean_vel']['compute_func'])(df,groups,frame,data_dir,grids,lengthscale) for frame in df['frame'].unique())
+            else:
+                vlim_mean=get_vlim(df,map_dic['mean_vel']['compute_func'],groups,data_dir,grids,show_hist=True)
+                pickle.dump(vlim_mean,open(osp.join(mean_dir,'data','vlim.p'),"wb"))
+
+        vlim_mean=pickle.load( open(osp.join(mean_dir,'data','vlim.p'), "rb" ))
+        #plot colorbar
+        plot_cmap(mean_dir,map_dic['mean_vel']['cmap_label'],cm.plasma,vlim_mean[0],vlim_mean[1])
 
     #plot maps
     if parallelize:
         num_cores = multiprocessing.cpu_count()
-        Parallel(n_jobs=num_cores)(delayed(plot_vfield)(df,frame,data_dir,no_bkg,vlim) for frame in df['frame'].unique())
+        Parallel(n_jobs=num_cores)(delayed(plot_vfield)(df,frame,data_dir,no_bkg,vlim,axis_on,plot_on_mean,black_arrows) for frame in df['frame'].unique())
     else:
         for i,frame in enumerate(df['frame'].unique()):
-            plot_vfield(df,frame,data_dir,no_bkg=no_bkg,vlim=vlim,axis_on=axis_on)
+            plot_vfield(df,frame,data_dir,no_bkg=no_bkg,vlim=vlim,axis_on=axis_on,plot_on_mean=plot_on_mean,black_arrows=black_arrows,vlim_mean=vlim_mean)
 
 def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallelize=False,manual_vlim=False,axis_on=False,**kwargs):
 
@@ -1153,17 +1186,17 @@ def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_l
     
     plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=0.75/linewidth)
 
-def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None,axis_on=False):
+def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None,axis_on=False,plot_on_mean=False,black_arrows=False):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
     grids=make_grid(x_grid_size,data_dir,dimensions=dimensions)
-    plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize,refresh=refresh,axis_on=axis_on)
+    plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize,refresh=refresh,axis_on=axis_on,plot_on_mean=plot_on_mean,black_arrows=black_arrows)
     if grids is not None:
         plot_all_maps(df,data_dir,grids,'div',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,axis_on=axis_on,lengthscale=lengthscale)
         plot_all_maps(df,data_dir,grids,'mean_vel',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,manual_vlim=True,axis_on=axis_on)
-        if z0 is None:
-            z0= df['z_rel'].min() + (df['z_rel'].max()-df['z_rel'].min())/2.
-            print 'z0=%f'%z0
-        plot_all_maps(df,data_dir,grids,'z_flow',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,z0=z0,timescale=timescale)
+        # if z0 is None:
+        #     z0= df['z_rel'].min() + (df['z_rel'].max()-df['z_rel'].min())/2.
+        #     print 'z0=%f'%z0
+        # plot_all_maps(df,data_dir,grids,'z_flow',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,z0=z0,timescale=timescale)
 
 def avg_ROIs(data_dir,frame_subset=None,selection_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True,refresh=False):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
