@@ -14,6 +14,7 @@ import multiprocessing
 from joblib import Parallel, delayed
 import seaborn as sns
 import datetime
+from mpl_toolkits.mplot3d import axes3d
 
 plt.style.use('ggplot') # Make the graphs a bit prettier
 
@@ -640,8 +641,13 @@ def plot_cmap(plot_dir,label,cmap,vmin,vmax):
     fig.savefig(filename, dpi=300, bbox_inches='tight')
     close('all')
 
-def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,lengthscale=1.,length_ref=0.75,display=False):
-    """ Print the tracked pictures with updated (=relinked) tracks"""
+def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,lengthscale=1.,length_ref=0.75,display=False,plot3D=False,elevation=None,angle=None):
+    """ Plot all cells of a given frame.
+        Different groups of cells can be plotted with different colors (data contained in df_list)
+        The trajectory of each cell can be plotted with plot_traj
+        By default, the cells are plotted on the microscopy image that should be stored in the directory raw.
+        It can be plotted in 3D with plot3D, elevation and angle set the 3D view
+    """
     print '\rplotting cells '+str(frame),
     sys.stdout.flush()
 
@@ -658,7 +664,11 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
         z_labeling=True
 
     #import image
-    fig,ax,xmin,ymin,xmax,ymax=get_background(df_list[0],data_dir,frame,no_bkg=no_bkg)
+    if plot3D:
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+    else:
+        fig,ax,xmin,ymin,xmax,ymax=get_background(df_list[0],data_dir,frame,no_bkg=no_bkg)
     for k,df in enumerate(df_list):
         groups=groups_list[k]
         group=groups.get_group(frame).reset_index(drop=True)
@@ -685,18 +695,34 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
                 traj=get_obj_traj(track_groups,track,max_frame=frame)
                 traj_length,c=traj.shape
                 if traj_length>1:
-                    if z_labeling:
-                        X=traj['x'].values;Y=traj['y'].values;Z=traj['z_rel'].values; #convert to numpy to optimize speed
-                        for j in range(1,traj_length):
-                            ax.plot([X[j-1],X[j]],[Y[j-1],Y[j]],lw=lw,ls='-',color=get_cmap_color(Z[j],cm.plasma,vmin=z_lim[0],vmax=z_lim[1]))
-                        ax.plot(X[traj_length-1],Y[traj_length-1],ms=ms,marker='.',color=get_cmap_color(Z[j],cm.plasma,vmin=z_lim[0],vmax=z_lim[1]))
-                    elif multiple_groups:
-                        ax.plot(traj['x'],traj['y'],lw=lw,ls='-',color=color_list[k%7])
-                        ax.plot(traj['x'].values[-1],traj['y'].values[-1],ms=ms,marker='.',color=color_list[k%7])
+                    if not plot3D:
+                        if z_labeling:
+                            X=traj['x'].values;Y=traj['y'].values;Z=traj['z_rel'].values; #convert to numpy to optimize speed
+                            for j in range(1,traj_length):
+                                ax.plot([X[j-1],X[j]],[Y[j-1],Y[j]],lw=lw,ls='-',color=get_cmap_color(Z[j],cm.plasma,vmin=z_lim[0],vmax=z_lim[1]))
+                            ax.plot(X[traj_length-1],Y[traj_length-1],ms=ms,marker='.',color=get_cmap_color(Z[j],cm.plasma,vmin=z_lim[0],vmax=z_lim[1]))
+                        elif multiple_groups:
+                            ax.plot(traj['x'],traj['y'],lw=lw,ls='-',color=color_list[k%7])
+                            ax.plot(traj['x'].values[-1],traj['y'].values[-1],ms=ms,marker='.',color=color_list[k%7])
+                        else:
+                            ax.plot(traj['x'],traj['y'],lw=lw,ls='-',color=color_list[track%7])
+                            ax.plot(traj['x'].values[-1],traj['y'].values[-1],ms=ms,marker='.',color=color_list[track%7])                       
+                        ax.axis([xmin,xmax,ymin,ymax])
                     else:
-                        ax.plot(traj['x'],traj['y'],lw=lw,ls='-',color=color_list[track%7])
-                        ax.plot(traj['x'].values[-1],traj['y'].values[-1],ms=ms,marker='.',color=color_list[track%7])                       
-                    ax.axis([xmin,xmax,ymin,ymax])
+                        if z_labeling:
+                            X=traj['x'].values;Y=traj['y'].values;Z=traj['z_rel'].values; #convert to numpy to optimize speed
+                            for j in range(1,traj_length):
+                                ax.plot([X[j-1],X[j]],[Y[j-1],Y[j]],[Z[j-1],Z[j]],lw=lw,ls='-',color=get_cmap_color(Z[j],cm.plasma,vmin=z_lim[0],vmax=z_lim[1]))
+                            ax.scatter(X[traj_length-1],Y[traj_length-1],Z[traj_length-1],s=10,color=get_cmap_color(Z[j],cm.plasma,vmin=z_lim[0],vmax=z_lim[1]))
+                        elif multiple_groups:
+                            ax.plot(traj['x'],traj['y'],lw=lw,ls='-',color=color_list[k%7])
+                            ax.plot(traj['x'].values[-1],traj['y'].values[-1],ms=ms,marker='.',color=color_list[k%7])
+                        else:
+                            ax.plot(traj['x'],traj['y'],lw=lw,ls='-',color=color_list[track%7])
+                            ax.plot(traj['x'].values[-1],traj['y'].values[-1],ms=ms,marker='.',color=color_list[track%7])                       
+                            ax.axis([xmin,xmax,ymin,ymax])
+                        ax.view_init(elev = elevation, azim=angle)
+                        plt.axis('off')
     if display:
         plt.show()
         return                
@@ -921,7 +947,7 @@ def plot_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,time
 
 #### PLOT_ALL methods
 
-def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,parallelize=False,lengthscale=1.,length_ref=0.75):
+def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,parallelize=False,lengthscale=1.,length_ref=0.75,plot3D=False,elevation=None,angle=None):
     plot_dir=osp.join(data_dir,'traj')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
@@ -936,7 +962,7 @@ def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,n
         Parallel(n_jobs=num_cores)(delayed(plot_cells)(df_list,groups_list,frame,data_dir,plot_traj,z_lim,hide_labels,no_bkg,lengthscale) for frame in df['frame'].unique())
     else:
         for frame in df['frame'].unique():
-            plot_cells(df_list,groups_list,frame,data_dir,plot_traj,z_lim,hide_labels,no_bkg,lengthscale,length_ref)
+            plot_cells(df_list,groups_list,frame,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,lengthscale=lengthscale,length_ref=length_ref,plot3D=plot3D,elevation=elevation,angle=angle)
 
 def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refresh=False,axis_on=False,plot_on_mean=False,black_arrows=False):
     # Maps of all frames are computed through the get_vlim function
@@ -1167,7 +1193,7 @@ def plot_all_XY_flow(df,data_dir,line=None,orientation=None,frame_subset=None,wi
 ###########   CONTAINER METHODS   ###############################
 #################################################################
 
-def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,linewidth=1.):
+def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,linewidth=1.,plot3D=False):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
     z_lim=[df['z_rel'].min(),df['z_rel'].max()] if dim==3 else []
     df_list=[]
@@ -1184,7 +1210,7 @@ def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_l
         print 'ERROR: not a valid answer'
         return
     
-    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=0.75/linewidth)
+    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=0.75/linewidth,plot3D=plot3D)
 
 def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None,axis_on=False,plot_on_mean=True,black_arrows=True):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
