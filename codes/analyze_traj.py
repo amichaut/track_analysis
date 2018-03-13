@@ -105,7 +105,8 @@ def get_data(data_dir,refresh=False):
         lengthscale=1./info["lengthscale"];timescale=info["delta_t"];columns=info["columns"]
         df=pd.DataFrame(data[:,1:],columns=columns) 
         #scale data
-        dimensions=['x','y','z'] if 'z' in columns else ['x','y']
+        
+        =['x','y','z'] if 'z' in columns else ['x','y']
         dim=len(dimensions)
         scale_dim(df,dimensions,timescale,lengthscale)
         compute_parameters(df)
@@ -1187,6 +1188,101 @@ def plot_all_XY_flow(df,data_dir,line=None,orientation=None,frame_subset=None,wi
 
     return plot_data_list
 
+def compute_msd(trajectory, coords=['x', 'y']):
+    '''Compute the MSD of a trajectory that potentially misses some steps. The trajectory steps MUST be constant'''
+    dt_array=trajectory['t'][1:].values - trajectory['t'][:-1].values
+    if dt_array[dt_array==0].size!=0: #if there is an overlap
+        print "WARNING: overlap in the traj"
+    dt=dt_array[dt_array!=0].min()
+    max_shift=np.floor(trajectory['t'].values.max()/dt).astype(np.int)
+    shifts=range(0,max_shift+1)
+    tau=np.array(shifts)*dt
+    msds = np.zeros(tau.size)
+    msds_std = np.zeros(tau.size)
+    numpoints = np.zeros(tau.size)
+    #initialize dictionary of square displacements (displ(t)-displ(t-delta_t))
+    sqdists={}
+    for delta in tau:
+        delta='%.2f'%delta
+        sqdists[delta]=np.array([])
+    
+    for shift in shifts:
+        #get the displacement if the shift is equal to the right delta
+        shifted=trajectory.shift(-shift)-trajectory
+        delta_set = shifted['t'].unique()
+        for delta in delta_set[~np.isnan(delta_set)]:
+            indices = shifted['t'] == delta
+            delta='%.2f'%delta
+            sqdists[delta] = np.append(sqdists[delta],np.square(shifted.loc[indices,coords]).sum(axis=1))
+
+    for i,delta in enumerate(tau):
+        delta='%.2f'%delta
+        sqdist=sqdists[delta][~np.isnan(sqdists[delta])]
+        msds[i] = sqdist.mean()
+        msds_std[i] = sqdist.std()
+        numpoints[i] = sqdist.size
+    msds = pd.DataFrame({'msds': msds, 'tau': tau, 'msds_std': msds_std, 'numpoints':numpoints})
+    return msds
+
+def fit_msd(msd,trajectory,plot_fit=False,max_pers_time=300,model='PRW'):
+    '''Fit MSD with a persistent random walk model and extract the persistence length '''
+    n=msd['numpoints'][msd['numpoints']>msd['numpoints'].max()*0.7].size #fit MSD only on part with enough statistics
+    #lmfit model
+    mean_vel=trajectory['v'][1:].mean()
+    if model=='PRW':
+        func = lambda t,P:2*(mean_vel**2)*P*(t-P*(1-np.exp(-t/P)))
+        func_model=Model(func)
+        p=func_model.make_params(P=10)
+        p['P'].set(min=0,max=max_pers_time)
+    elif model==biased_flow:
+        func = lambda t,D,v:4*D*t+v*t**2
+        func_model=Model(func)
+        p=func_model.make_params(D=1,v=1)
+        p['D'].set(min=0)
+        p['v'].set(min=0)
+
+    best=func_model.fit(msd['msds'][0:n],t=msd['tau'][0:n],params=p)
+    if best.success==False:
+        print "WARNING: fit_msd failed"
+    if plot_fit and best.success:
+        ax = msd.plot(x="tau", y="msds", logx=True, logy=True)
+        # ax = msd.plot(x="tau", y="msds")
+        fitted=PRW(msd['tau'],best.best_values['P'])
+        fitted_df=pd.DataFrame({'fitted':fitted,'tau':msd['tau']})
+        fitted_df.plot(x="tau", y="fitted", logx=True, logy=True, ax=ax)
+        # fitted_df.plot(x="tau", y="fitted", ax=ax)
+        plt.show()
+    return best.best_values['P'],mean_vel
+
+def get_obj_persistence_length(track_groups,track,traj=None,plot_fit=False):
+    '''This function fits an object MSD with a PRW model to extract its persistence length'''
+    if traj is None:
+        traj=get_obj_traj(track_groups,track)
+    msd=compute_msd(traj)
+    pers_time,speed=fit_msd(msd,traj,plot_fit=plot_fit)
+    pers_length=pers_time*speed
+    return pers_length
+
+def plot_hist_persistence_length(data_dir,track_groups,tracks,minimal_traj_length=40,normalize=True):
+    close('all')
+    pers_length_dict={}
+    for track in tracks:
+        traj=get_obj_traj(track_groups,track)
+        traj_length,c=traj.shape
+        if traj_length>minimal_traj_length:
+            pers_length_dict[track]=get_obj_persistence_length(track_groups,track,traj)
+
+    pers_lengths=pd.Series(pers_length_dict)
+    if normalize:
+        pers_lengths.plot.hist(weights=np.ones_like(pers_lengths*100)/len(pers_lengths))
+        ylabel('trajectories proportion ')
+    else:
+        pers_lengths.plot.hist()
+        ylabel('trajectories count')
+    xlabel('persistence length ($\mu m$) ')
+    filename = osp.join(data_dir,'persistence_lenght.svg')
+    savefig(filename, dpi=300, bbox_inches='tight')
+    close()
 
 
 #################################################################
