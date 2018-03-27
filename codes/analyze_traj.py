@@ -15,8 +15,8 @@ from joblib import Parallel, delayed
 import seaborn as sns
 import datetime
 from mpl_toolkits.mplot3d import axes3d
+from lmfit import Parameters, Model
 
-plt.style.use('ggplot') # Make the graphs a bit prettier
 
 color_list=[c['color'] for c in list(plt.rcParams['axes.prop_cycle'])]
 
@@ -50,12 +50,12 @@ def scale_dim(df,dimensions=['x','y','z'],timescale=1.,lengthscale=1.):
     for dim in dimensions:
         df[dim+'_scaled']=df[dim]/lengthscale
         
-def compute_parameters(df):
+def compute_parameters(df,dimensions=['x','y','z']):
     """This function computes different parameters: velocity, ... """
     r,c=df.shape
     
     #velocity components
-    for dim in ['x','y','z']:
+    for dim in dimensions:
         a=np.empty(r)
         a[:]=np.nan
         df['v'+dim]=a
@@ -66,10 +66,14 @@ def compute_parameters(df):
             ind=traj_group.index.values
             df.loc[ind[1:],'v'+dim]=components[:-1].values
     #velocity modulus
-    df['v']=sqrt(df['vx']**2+df['vy']**2+df['vz']**2)
+    sum_=0
+    for dim in dimensions:
+        sum_+=df['v'+dim]**2
+    df['v']=sqrt(sum_)
 
-    #relative z: centered around mean
-    df['z_rel']=df['z_scaled']-df['z_scaled'].mean()
+    if 'z' in dimensions:
+        #relative z: centered around mean
+        df['z_rel']=df['z_scaled']-df['z_scaled'].mean()
     
 def get_info(data_dir):
     """info.txt gives the lengthscale in um/px, the frame intervalle delta_t in min and the column names of the table"""
@@ -91,7 +95,7 @@ def get_info(data_dir):
         print "ERROR: info.txt doesn't exist or is not at the right place"
     return info
 
-def get_data(data_dir,refresh=False):
+def get_data(data_dir,refresh=False,correct_shift=False):
     #import
     pickle_fn=osp.join(data_dir,"data_base.p")
     if osp.exists(pickle_fn)==False or refresh:
@@ -105,11 +109,12 @@ def get_data(data_dir,refresh=False):
         lengthscale=1./info["lengthscale"];timescale=info["delta_t"];columns=info["columns"]
         df=pd.DataFrame(data[:,1:],columns=columns) 
         #scale data
-        
-        =['x','y','z'] if 'z' in columns else ['x','y']
+        dimensions=['x','y','z'] if 'z' in columns else ['x','y']
         dim=len(dimensions)
         scale_dim(df,dimensions,timescale,lengthscale)
-        compute_parameters(df)
+        compute_parameters(df,dimensions)
+        if correct_shift:
+            shift=get_shift(data_dir,lengthscale,timescale)
         #update pickle
         pickle.dump([df,lengthscale,timescale,columns,dim], open( osp.join(data_dir,"data_base.p"), "wb" ) )
     else:
@@ -117,13 +122,37 @@ def get_data(data_dir,refresh=False):
     
     return df,lengthscale,timescale,columns,dim
 
-def get_obj_traj(track_groups,track,max_frame=None):
+def get_obj_traj(track_groups,track,max_frame=None,dim=3,shift=None,lengthscale=1.):
     '''gets the trajectory of an object. track_groups is the output of a groupby(['relabel'])'''
     group=track_groups.get_group(track)
-    trajectory=group[['frame','t','x','y','z','z_scaled','z_rel','v']].copy()
+    cols=['frame','t','x','y','z','z_scaled','z_rel','v'] if dim==3 else ['frame','t','x','y','v']
+    trajectory=group[cols].copy()
     if max_frame is not None:
         trajectory=trajectory[trajectory['frame']<=max_frame]
+    if shift is not None:
+        df_comp=pd.merge(trajectory,shift,on=['t','frame'],how='inner')
+        df_comp['x_shifted']=df_comp['x']-df_comp['x0']
+        df_comp['y_shifted']=df_comp['y']-df_comp['y0']
+        trajectory=df_comp[['frame','t','x_shifted','y_shifted']+cols[4:]].copy()
+        trajectory.columns=cols
+        # #recalculate v TO BE CHECKED
+        # dimensions=['x','y','z'] if dim==3 else ['x','y']
+        # for dimension in ['x','y']:
+        #     df_comp[dimension+'_scaled']=df_comp[dimension+'_shifted']/lengthscale
+        #     df_comp.loc[df_comp.index[1:],'v'+dimension]=(df_comp[dimension+'_scaled'].shift(-1)-df_comp[dimension+'_scaled'])/(df_comp['t'].shift(-1)-df_comp['t'])
+        # sum_=0
+        # for dimension in dimensions:
+        #     sum_+=df_comp['v'+dim]**2
+        # trajectory['v']=sqrt(sum_)
     return trajectory.reset_index(drop=True)
+
+def get_shift(data_dir,timescale):
+    filename=osp.join(data_dir,"shift.csv")
+    if osp.exists(filename):
+        df=pd.read_csv(filename)
+        df['frame']=df['frame']-1
+        df['t']=df['frame']*timescale
+        return df
 
 def filter_by_traj_len(df,min_traj_len=1,max_traj_len=None):
     df2=pd.DataFrame()
@@ -625,6 +654,116 @@ def select_frame_list(df,frame_subset=None):
         frame_list = [frame_subset]
     return frame_list
 
+def compute_msd(trajectory, coords=['x', 'y']):
+    '''Compute the MSD of a trajectory that potentially misses some steps. The trajectory steps MUST be constant'''
+    dt_array=trajectory['t'][1:].values - trajectory['t'][:-1].values
+    if dt_array[dt_array==0].size!=0: #if there is an overlap
+        print "WARNING: overlap in the traj"
+    dt=dt_array[dt_array!=0].min()
+    max_shift=np.floor(trajectory['t'].values.max()/dt).astype(np.int)
+    shifts=range(0,max_shift+1)
+    tau=np.array(shifts)*dt
+    msds = np.zeros(tau.size)
+    msds_std = np.zeros(tau.size)
+    numpoints = np.zeros(tau.size)
+    #initialize dictionary of square displacements (displ(t)-displ(t-delta_t))
+    sqdists={}
+    for delta in tau:
+        delta='%.2f'%delta
+        sqdists[delta]=np.array([])
+    
+    for shift in shifts:
+        #get the displacement if the shift is equal to the right delta
+        shifted=trajectory.shift(-shift)-trajectory
+        delta_set = shifted['t'].unique()
+        for delta in delta_set[~np.isnan(delta_set)]:
+            indices = shifted['t'] == delta
+            delta='%.2f'%delta
+            sqdists[delta] = np.append(sqdists[delta],np.square(shifted.loc[indices,coords]).sum(axis=1))
+
+    for i,delta in enumerate(tau):
+        delta='%.2f'%delta
+        sqdist=sqdists[delta][~np.isnan(sqdists[delta])]
+        msds[i] = sqdist.mean()
+        msds_std[i] = sqdist.std()
+        numpoints[i] = sqdist.size
+    msds = pd.DataFrame({'msds': msds, 'tau': tau, 'msds_std': msds_std, 'numpoints':numpoints})
+    return msds
+
+def fit_msd(msd,trajectory,save_plot=False,model_bounds={'P':[0,300],'D':[0,1e8],'v':[0,1e8]},model='PRW',data_dir=None,traj=None):
+    '''Fit MSD with a persistent random walk model and extract the persistence length '''
+
+    if data_dir is not None:
+        outdir=osp.join(data_dir,'MSD')
+        if osp.isdir(outdir) is False:
+            os.mkdir(outdir)
+    else:
+        outdir=None
+
+    n=msd['numpoints'][msd['numpoints']>msd['numpoints'].max()*0.7].size #fit MSD only on part with enough statistics
+    #lmfit model
+    mean_vel=trajectory['v'][1:].mean()
+    success=False;best=None;logx=False;logy=False
+    if model is not None:
+        if model=='PRW':
+            logx=True;logy=True
+            func = lambda t,P:2*(mean_vel**2)*P*(t-P*(1-np.exp(-t/P)))
+            func_model=Model(func)
+            p=func_model.make_params(P=10)
+            p['P'].set(min=model_bounds['P'][0],max=model_bounds['P'][1])
+        elif model=='biased_diff':
+            func = lambda t,D,v:4*D*t+v**2*t**2
+            func_model=Model(func)
+            p=func_model.make_params(D=1,v=1)
+            p['D'].set(min=model_bounds['D'][0])
+            p['v'].set(min=model_bounds['v'][0])
+        try:
+            best=func_model.fit(msd['msds'][0:n],t=msd['tau'][0:n],params=p)
+            if best.success==False:
+                print "WARNING: fit_msd failed"
+            success=best.success
+        except:
+            best=Dummy_class()
+            success=False
+
+    if save_plot:
+        ax = msd.plot.scatter(x="tau", y="msds", logx=logx, logy=logy)
+        if success:
+            fitted=func(msd['tau'],*best.best_values.values())
+            fitted_df=pd.DataFrame({'fitted':fitted,'tau':msd['tau']})
+            fitted_df.plot(x="tau", y="fitted", logx=logx, logy=logy, ax=ax)
+            if model=='biased_diff':
+                title_ = 'D=%0.2f'%best.best_values['D']+r' $\mu m^2/min$, '+'v=%0.2f'%best.best_values['v']+r' $\mu m/min$'
+            elif model=='PRW':
+                title_ = 'P=%0.2f min'%best.best_values['P']
+            ax.set_title(title_)
+        ax.set_xlabel('lag time (min)')
+        ax.set_ylabel(r'MSD ($\mu m^2$)')
+        if outdir is None:
+            print "WARNING: can't save MSD plot, data_dit not provided"
+        else:
+            savefig(osp.join(outdir,'%d.svg'%traj), dpi=300, bbox_inches='tight')
+            close()
+    return best,mean_vel,success
+
+def get_obj_persistence_length(track_groups,track,traj=None,save_plot=False,dim=3):
+    '''This function fits an object MSD with a PRW model to extract its persistence length'''
+    if traj is None:
+        traj=get_obj_traj(track_groups,track,dim=dim)
+    msd=compute_msd(traj)
+    best,speed,success=fit_msd(msd,traj,save_plot=save_plot)
+    if success:
+        pers_time=best.best_values['P']
+        pers_length=pers_time*speed
+        return pers_length
+    else:
+        return np.nan
+
+class Dummy_class:
+    """Class used to create an object containing a single attribute success. Useful for fit_SLS for returning an object instead of the data container object"""
+    def __init__ (self):
+        self.success = False
+
 
 #################################################################
 ###########   PLOT METHODS   ####################################
@@ -642,7 +781,7 @@ def plot_cmap(plot_dir,label,cmap,vmin,vmax):
     fig.savefig(filename, dpi=300, bbox_inches='tight')
     close('all')
 
-def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,lengthscale=1.,length_ref=0.75,display=False,plot3D=False,elevation=None,angle=None):
+def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,lengthscale=1.,length_ref=0.75,display=False,plot3D=False,elevation=None,angle=None,dim=3,shift=None):
     """ Plot all cells of a given frame.
         Different groups of cells can be plotted with different colors (data contained in df_list)
         The trajectory of each cell can be plotted with plot_traj
@@ -693,7 +832,7 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
                 size_factor=lengthscale*length_ref
                 lw=lw_ref*size_factor; ms=ms_ref*size_factor
                 #plot trajectory
-                traj=get_obj_traj(track_groups,track,max_frame=frame)
+                traj=get_obj_traj(track_groups,track,max_frame=frame,dim=dim,shift=shift)
                 traj_length,c=traj.shape
                 if traj_length>1:
                     if not plot3D:
@@ -946,9 +1085,31 @@ def plot_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,time
 
     return plot_data
 
+def plot_hist_persistence_length(data_dir,track_groups,tracks,minimal_traj_length=40,normalize=True,dim=3):
+    close('all')
+    pers_length_dict={}
+    for track in tracks:
+        traj=get_obj_traj(track_groups,track,dim=dim)
+        traj_length,c=traj.shape
+        if traj_length>minimal_traj_length:
+            pers_length_dict[track]=get_obj_persistence_length(track_groups,track,traj,dim=dim)
+
+    pers_lengths=pd.Series(pers_length_dict)
+    if normalize:
+        pers_lengths.plot.hist(weights=np.ones_like(pers_lengths*100)/len(pers_lengths))
+        ylabel('trajectories proportion ')
+    else:
+        pers_lengths.plot.hist()
+        ylabel('trajectories count')
+    xlabel('persistence length ($\mu m$) ')
+    filename = osp.join(data_dir,'persistence_lenght.svg')
+    savefig(filename, dpi=300, bbox_inches='tight')
+    close()
+
+
 #### PLOT_ALL methods
 
-def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,parallelize=False,lengthscale=1.,length_ref=0.75,plot3D=False,elevation=None,angle=None):
+def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,parallelize=False,lengthscale=1.,length_ref=0.75,plot3D=False,elevation=None,angle=None,dim=3,shift=None):
     plot_dir=osp.join(data_dir,'traj')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
@@ -963,7 +1124,7 @@ def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,n
         Parallel(n_jobs=num_cores)(delayed(plot_cells)(df_list,groups_list,frame,data_dir,plot_traj,z_lim,hide_labels,no_bkg,lengthscale) for frame in df['frame'].unique())
     else:
         for frame in df['frame'].unique():
-            plot_cells(df_list,groups_list,frame,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,lengthscale=lengthscale,length_ref=length_ref,plot3D=plot3D,elevation=elevation,angle=angle)
+            plot_cells(df_list,groups_list,frame,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,lengthscale=lengthscale,length_ref=length_ref,plot3D=plot3D,elevation=elevation,angle=angle,dim=dim,shift=shift)
 
 def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refresh=False,axis_on=False,plot_on_mean=False,black_arrows=False):
     # Maps of all frames are computed through the get_vlim function
@@ -1188,125 +1349,78 @@ def plot_all_XY_flow(df,data_dir,line=None,orientation=None,frame_subset=None,wi
 
     return plot_data_list
 
-def compute_msd(trajectory, coords=['x', 'y']):
-    '''Compute the MSD of a trajectory that potentially misses some steps. The trajectory steps MUST be constant'''
-    dt_array=trajectory['t'][1:].values - trajectory['t'][:-1].values
-    if dt_array[dt_array==0].size!=0: #if there is an overlap
-        print "WARNING: overlap in the traj"
-    dt=dt_array[dt_array!=0].min()
-    max_shift=np.floor(trajectory['t'].values.max()/dt).astype(np.int)
-    shifts=range(0,max_shift+1)
-    tau=np.array(shifts)*dt
-    msds = np.zeros(tau.size)
-    msds_std = np.zeros(tau.size)
-    numpoints = np.zeros(tau.size)
-    #initialize dictionary of square displacements (displ(t)-displ(t-delta_t))
-    sqdists={}
-    for delta in tau:
-        delta='%.2f'%delta
-        sqdists[delta]=np.array([])
+def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=True,plot_along_Y=True,origins=None,lengthscale=1.,shift=None):
+    cols=['traj','xmean','ymean','D','v'] if fit_model=="biased_diff" else ['traj','xmean','ymean','P']
+    param_list=cols[3:]
+    df_out=pd.DataFrame(columns=cols)
+    i=0
+    for df in df_list:
+        track_groups=df.groupby(['traj'])
+        track_list=df['traj'].unique()
+        for track in track_list:
+            traj=get_obj_traj(track_groups,track,dim=dim,shift=shift)
+            msd=compute_msd(traj)
+            best,speed,success=fit_msd(msd,traj,save_plot=save_plot,model=fit_model,data_dir=data_dir,traj=track)
+            if success:
+                param_val=[best.best_values[param] for param in param_list]
+                df_out.loc[i,cols]=[track,traj['x'].mean(),traj['y'].mean()]+param_val
+                i+=1
+
+    df_out=df_out.apply(pd.to_numeric,args=('ignore',None))
     
-    for shift in shifts:
-        #get the displacement if the shift is equal to the right delta
-        shifted=trajectory.shift(-shift)-trajectory
-        delta_set = shifted['t'].unique()
-        for delta in delta_set[~np.isnan(delta_set)]:
-            indices = shifted['t'] == delta
-            delta='%.2f'%delta
-            sqdists[delta] = np.append(sqdists[delta],np.square(shifted.loc[indices,coords]).sum(axis=1))
+    if origins is not None:
+        for k,origin in enumerate(origins):
+            df_out[cols[k+1]]=abs(df_out[cols[k+1]]-origin)/lengthscale
 
-    for i,delta in enumerate(tau):
-        delta='%.2f'%delta
-        sqdist=sqdists[delta][~np.isnan(sqdists[delta])]
-        msds[i] = sqdist.mean()
-        msds_std[i] = sqdist.std()
-        numpoints[i] = sqdist.size
-    msds = pd.DataFrame({'msds': msds, 'tau': tau, 'msds_std': msds_std, 'numpoints':numpoints})
-    return msds
+    if to_csv:
+        outdir=osp.join(data_dir,'MSD')
+        if osp.isdir(outdir) is False:
+            os.mkdir(outdir)
+        df_out.to_csv(osp.join(outdir,'all_MSD_fit.csv'))
 
-def fit_msd(msd,trajectory,plot_fit=False,max_pers_time=300,model='PRW'):
-    '''Fit MSD with a persistent random walk model and extract the persistence length '''
-    n=msd['numpoints'][msd['numpoints']>msd['numpoints'].max()*0.7].size #fit MSD only on part with enough statistics
-    #lmfit model
-    mean_vel=trajectory['v'][1:].mean()
-    if model=='PRW':
-        func = lambda t,P:2*(mean_vel**2)*P*(t-P*(1-np.exp(-t/P)))
-        func_model=Model(func)
-        p=func_model.make_params(P=10)
-        p['P'].set(min=0,max=max_pers_time)
-    elif model==biased_flow:
-        func = lambda t,D,v:4*D*t+v*t**2
-        func_model=Model(func)
-        p=func_model.make_params(D=1,v=1)
-        p['D'].set(min=0)
-        p['v'].set(min=0)
+    if plot_along_Y is not None:
+        lab_dict={'v':r'$\langle v \rangle \ \mu m/min$','D':r'$D \ \mu m^2/min$'}
+        for param in param_list:
+            fig,ax=plt.subplots(1,1)
+            df_out.plot.scatter(x='ymean',y=param,ax=ax)
+            ax.set_ylabel(lab_dict[param])
+            xlab='position along Y axis (px)' if origins is None else r'distance to origin ($\mu m$)'
+            ax.set_xlabel(xlab)
+            fig.savefig(osp.join(outdir,param+'_along_Y.svg'))
 
-    best=func_model.fit(msd['msds'][0:n],t=msd['tau'][0:n],params=p)
-    if best.success==False:
-        print "WARNING: fit_msd failed"
-    if plot_fit and best.success:
-        ax = msd.plot(x="tau", y="msds", logx=True, logy=True)
-        # ax = msd.plot(x="tau", y="msds")
-        fitted=PRW(msd['tau'],best.best_values['P'])
-        fitted_df=pd.DataFrame({'fitted':fitted,'tau':msd['tau']})
-        fitted_df.plot(x="tau", y="fitted", logx=True, logy=True, ax=ax)
-        # fitted_df.plot(x="tau", y="fitted", ax=ax)
-        plt.show()
-    return best.best_values['P'],mean_vel
-
-def get_obj_persistence_length(track_groups,track,traj=None,plot_fit=False):
-    '''This function fits an object MSD with a PRW model to extract its persistence length'''
-    if traj is None:
-        traj=get_obj_traj(track_groups,track)
-    msd=compute_msd(traj)
-    pers_time,speed=fit_msd(msd,traj,plot_fit=plot_fit)
-    pers_length=pers_time*speed
-    return pers_length
-
-def plot_hist_persistence_length(data_dir,track_groups,tracks,minimal_traj_length=40,normalize=True):
-    close('all')
-    pers_length_dict={}
-    for track in tracks:
-        traj=get_obj_traj(track_groups,track)
-        traj_length,c=traj.shape
-        if traj_length>minimal_traj_length:
-            pers_length_dict[track]=get_obj_persistence_length(track_groups,track,traj)
-
-    pers_lengths=pd.Series(pers_length_dict)
-    if normalize:
-        pers_lengths.plot.hist(weights=np.ones_like(pers_lengths*100)/len(pers_lengths))
-        ylabel('trajectories proportion ')
-    else:
-        pers_lengths.plot.hist()
-        ylabel('trajectories count')
-    xlabel('persistence length ($\mu m$) ')
-    filename = osp.join(data_dir,'persistence_lenght.svg')
-    savefig(filename, dpi=300, bbox_inches='tight')
-    close()
+    return df_out
 
 
 #################################################################
 ###########   CONTAINER METHODS   ###############################
 #################################################################
 
-def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,linewidth=1.,plot3D=False):
+def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,linewidth=1.,plot3D=False,MSD_fit=None,z_lim=None,shift_traj=False):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
-    z_lim=[df['z_rel'].min(),df['z_rel'].max()] if dim==3 else []
+    if z_lim is None:
+        z_lim=[df['z_rel'].min(),df['z_rel'].max()] if dim==3 else []
     df_list=[]
 
-    subset=raw_input('By what do you want to filter? Type: none, ROI, track_length. \t ')
-    if subset=='none':
-        df_list=[df]
-    elif subset=='ROI':
-        df_list=filter_by_ROI(df,data_dir)
-    elif subset=='track_length':
-        min_traj_len=input('Give the minimum track length? (number of frames): ')
-        df_list=[filter_by_traj_len(df,min_traj_len=min_traj_len)]
-    else:
-        print 'ERROR: not a valid answer'
-        return
+    # subset=raw_input('By what do you want to filter? Type: none, ROI, track_length. \t ')
+    # if subset=='none':
+    #     df_list=[df]
+    # elif subset=='ROI':
+    #     df_list=filter_by_ROI(df,data_dir)
+    # elif subset=='track_length':
+    #     min_traj_len=input('Give the minimum track length? (number of frames): ')
+    #     df_list=[filter_by_traj_len(df,min_traj_len=min_traj_len)]
+    # else:
+    #     print 'ERROR: not a valid answer'
+    #     return
     
-    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=0.75/linewidth,plot3D=plot3D)
+    df_list=[filter_by_traj_len(df,min_traj_len=10)]
+
+    shift=get_shift(data_dir,timescale) if shift_traj else None
+
+    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=0.75/linewidth,plot3D=plot3D,dim=dim,shift=shift)
+    
+    if MSD_fit is not None:
+        plot_all_MSD(df_list,data_dir,fit_model=MSD_fit,dim=dim,lengthscale=lengthscale,save_plot=False,shift=shift)
 
 def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None,axis_on=False,plot_on_mean=True,black_arrows=True):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
