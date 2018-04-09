@@ -436,16 +436,24 @@ def get_subblock_data(X,Y,data,ROI):
 def select_map_ROI(data_dir,map_kind,frame,ROI_list=None):
     """Get data from a map in rectangular ROIs. If ROIs not given, manually drawn with get_ROI."""
     image_dir1=osp.join(data_dir,'raw')
-    if osp.isdir(image_dir1)==False:
-        image_dir1=osp.join(data_dir,map_kind)
 
-    image_dir=osp.join(data_dir,map_kind)
+    map_kind_ = 'vfield' if map_kind in ['vx','vy','vz'] else map_kind
+    if osp.isdir(image_dir1)==False:
+        image_dir1=osp.join(data_dir,map_kind_)
+
+    image_dir=osp.join(data_dir,map_kind_)
     not_found=True
     while not_found:
         if ROI_list is None:
             ROI_list=get_ROI(image_dir1,frame,tool=RectangleTool)
         data=get_map_data(image_dir,frame)
-        X=data[0];Y=data[1];data=data[-1]
+        X=data[0];Y=data[1]
+        if map_kind=='vy':
+            data=data[3]
+        elif map_kind=='vz':
+            data=data[4]            
+        else:
+            data=data[2]
         ROI_data_list=[]
         square_ROI=False
         for ROI in ROI_list:
@@ -855,7 +863,9 @@ def plot_ROI_avg(df,data_dir,map_kind,frame,ROI_data_list,plot_on_map=False,plot
     close('all')
     print '\rplotting ROI average '+str(frame),
     sys.stdout.flush()
-    plot_dir=osp.join(data_dir,map_kind,'ROI_avg')
+
+    map_kind_ = 'vfield' if map_kind in ['vx','vy','vz'] else map_kind
+    plot_dir=osp.join(data_dir,map_kind_,'ROI_avg')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
 
@@ -1056,7 +1066,9 @@ def plot_all_avg_ROI(df,data_dir,map_kind,frame_subset=None,selection_frame=None
 
     close('all')
 
-    plot_dir=osp.join(data_dir,map_kind,'ROI_avg')
+    map_kind_ = 'vfield' if map_kind in ['vx','vy','vz'] else map_kind 
+
+    plot_dir=osp.join(data_dir,map_kind_,'ROI_avg')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
 
@@ -1227,7 +1239,7 @@ def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=
 
 def avg_ROIs(data_dir,frame_subset=None,selection_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True,refresh=False):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
-    map_kind=raw_input("Give the map wou want to plot your ROIs on (div,mean_vel,z_flow,vfield): ")
+    map_kind=raw_input("Give the map wou want to plot your ROIs on (div,mean_vel,z_flow,vx,vy,vz): ")
     plot_all_avg_ROI(df,data_dir,map_kind,frame_subset=frame_subset,selection_frame=selection_frame,ROI_list=ROI_list,plot_on_map=plot_on_map,plot_section=plot_section,cumulative_plot=cumulative_plot,avg_plot=avg_plot,timescale=timescale)
 
 def XY_flow(data_dir,window_size=None,refresh=False,line=None,orientation=None,frame_subset=None,selection_frame=None,z_depth=None):
@@ -1249,7 +1261,9 @@ def XY_flow(data_dir,window_size=None,refresh=False,line=None,orientation=None,f
 map_dic={'div':{'compute_func':compute_div,'plot_func':plot_div,'cmap_label':'$div(\overrightarrow{v})\ (min^{-1})$'},
      'mean_vel':{'compute_func':compute_mean_vel,'plot_func':plot_mean_vel,'cmap_label':'$v\ (\mu m.min^{-1})$'},
      'z_flow':{'compute_func':compute_z_flow,'plot_func':plot_z_flow,'cmap_label':'cell flow $(min^{-1})$'},
-     'vfield':{'compute_func':compute_vfield,'plot_func':plot_vfield,'cmap_label':'$v_z\ (\mu m.min^{-1})$'}}
+     'vx':{'compute_func':compute_vfield,'plot_func':plot_vfield,'cmap_label':'$v_x\ (\mu m.min^{-1})$'},
+     'vy':{'compute_func':compute_vfield,'plot_func':plot_vfield,'cmap_label':'$v_y\ (\mu m.min^{-1})$'},
+     'vz':{'compute_func':compute_vfield,'plot_func':plot_vfield,'cmap_label':'$v_z\ (\mu m.min^{-1})$'}}
 
 
 ###############################################
