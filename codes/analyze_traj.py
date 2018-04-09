@@ -20,7 +20,7 @@ plt.style.use('ggplot') # Make the graphs a bit prettier
 
 color_list=[c['color'] for c in list(plt.rcParams['axes.prop_cycle'])]
 
-welcome_message="""\n\n WELCOME TO TRACK_ANALYSIS \n Developped and maintained by Arthur Michaut: arthur.michaut@gmail.com \n Last release: 11-06-2017\n\n\n     _''_\n    / o  \\\n  <       |\n    \\    /__\n    /       \\-----\n    /    \\    \\   \\__\n    |     \\_____\\  __>\n     \\--       ___/  \n        \\     /\n         || ||\n         /\\ /\\\n\n"""
+welcome_message="""\n\n WELCOME TO TRACK_ANALYSIS \n Developped and maintained by Arthur Michaut: arthur.michaut@gmail.com \n Last release: 12-01-2017\n\n\n     _''_\n    / o  \\\n  <       |\n    \\    /__\n    /       \\-----\n    /    \\    \\   \\__\n    |     \\_____\\  __>\n     \\--       ___/  \n        \\     /\n         || ||\n         /\\ /\\\n\n"""
 usage_message="""Usage: \n- plot cells analysis using cell_analysis(data_dir,refresh,parallelize,plot_traj,hide_labels,no_bkg,linewidth) \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
 plot_traj (default true) to print the cell trajectories, hide_labels (default True) to hide the cell label, no_bkg (default False) to remove the image background, linewidth being the trajectories width (default=1.0) \n
 - plot maps using map_analysis(data_dir,refresh,parallelize,x_grid_size,no_bkg,z0,dimensions,axis_on) \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
@@ -250,6 +250,7 @@ def compute_div(df,frame,groups,data_dir,grids,lengthscale):
     return data
 
 def compute_mean_vel(df,frame,groups,data_dir,grids):
+    """Uses the vfield data to compute the modulus of the vfield on center_grid (x,y)"""
     print '\rcomputing mean velocity field '+str(frame),
     sys.stdout.flush()
 
@@ -259,6 +260,7 @@ def compute_mean_vel(df,frame,groups,data_dir,grids):
 
     #get avg_vfield
     data=get_map_data(osp.join(data_dir,'vfield'),frame)
+    [x,y]=data[0:2]
     avg_vfield=data[2:]
 
     dim=2 if 'z' not in df.columns else 3 #2d or 3D
@@ -270,8 +272,7 @@ def compute_mean_vel(df,frame,groups,data_dir,grids):
     mean_vel=sqrt(V)
 
     #save data in pickle
-    X,Y=grids[0]
-    data=(X,Y,mean_vel)
+    data=(x,y,mean_vel)
     save_map_data(plot_dir,data,frame)
 
     return data
