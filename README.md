@@ -11,8 +11,8 @@ This codes provides different functions to analyze tracking data of cells over t
 ### How do I run the code ###
 * Open 'analyze_traj.py' in a IPython terminal: open terminal and run the command: %run <path_to_analyze_traj.py> (you can just drag and drop the file on the terminal after %run )
 * run the commands: 
-- cell_analysis(data_dir,refresh,parallelize,plot_traj,hide_labels,no_bkg,linewidth): cell trajectories
-- map_analysis(data_dir,refresh,parallelize,x_grid_size,no_bkg,z0,dimensions,axis_on): maps analyzing the velocity field
+- cell_analysis(data_dir,refresh,parallelize,plot_traj,hide_labels,no_bkg,linewidth,plot3D): cell trajectories
+- map_analysis(data_dir,refresh,parallelize,x_grid_size,no_bkg,z0,dimensions,axis_on,plot_on_mean,black_arrows): maps analyzing the velocity field
 - avg_ROIs(data_dir,frame_subset=None,selection_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True): plotting sections of map making an average along the major axis of a ROI
 - XY_flow(data_dir,window_size=None,refresh=False,line=None,orientation=None,frame_subset=None,selection_frame=None,z_depth=None): plot XY flow through a vertical surface defined by a XY line using
 
