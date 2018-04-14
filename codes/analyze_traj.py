@@ -50,12 +50,12 @@ def scale_dim(df,dimensions=['x','y','z'],timescale=1.,lengthscale=1.):
     for dim in dimensions:
         df[dim+'_scaled']=df[dim]/lengthscale
         
-def compute_parameters(df):
+def compute_parameters(df,dimensions=['x','y','z']):
     """This function computes different parameters: velocity, ... """
     r,c=df.shape
     
     #velocity components
-    for dim in ['x','y','z']:
+    for dim in dimensions:
         a=np.empty(r)
         a[:]=np.nan
         df['v'+dim]=a
@@ -66,10 +66,14 @@ def compute_parameters(df):
             ind=traj_group.index.values
             df.loc[ind[1:],'v'+dim]=components[:-1].values
     #velocity modulus
-    df['v']=sqrt(df['vx']**2+df['vy']**2+df['vz']**2)
+    sum_=0
+    for dim in dimensions:
+        sum_+=df['v'+dim]**2
+    df['v']=sqrt(sum_)
 
-    #relative z: centered around mean
-    df['z_rel']=df['z_scaled']-df['z_scaled'].mean()
+    if 'z' in dimensions:
+        #relative z: centered around mean
+        df['z_rel']=df['z_scaled']-df['z_scaled'].mean()
     
 def get_info(data_dir):
     """info.txt gives the lengthscale in um/px, the frame intervalle delta_t in min and the column names of the table"""
@@ -108,7 +112,8 @@ def get_data(data_dir,refresh=False):
         dimensions=['x','y','z'] if 'z' in columns else ['x','y']
         dim=len(dimensions)
         scale_dim(df,dimensions,timescale,lengthscale)
-        compute_parameters(df)
+        compute_parameters(df,dimensions)
+
         #update pickle
         pickle.dump([df,lengthscale,timescale,columns,dim], open( osp.join(data_dir,"data_base.p"), "wb" ) )
     else:
@@ -116,10 +121,11 @@ def get_data(data_dir,refresh=False):
     
     return df,lengthscale,timescale,columns,dim
 
-def get_obj_traj(track_groups,track,max_frame=None):
+def get_obj_traj(track_groups,track,max_frame=None,dim=3,lengthscale=1.):
     '''gets the trajectory of an object. track_groups is the output of a groupby(['relabel'])'''
     group=track_groups.get_group(track)
-    trajectory=group[['frame','t','x','y','z','z_scaled','z_rel','v']].copy()
+    cols=['frame','t','x','y','z','z_scaled','z_rel','v'] if dim==3 else ['frame','t','x','y','v']
+    trajectory=group[cols].copy()
     if max_frame is not None:
         trajectory=trajectory[trajectory['frame']<=max_frame]
     return trajectory.reset_index(drop=True)
@@ -162,7 +168,7 @@ def get_background(df,data_dir,frame,no_bkg=False,image_dir=None,orig=None,axis_
         xmin,xmax,ymin,ymax=ax.axis('on')
     else: 
         xmin,xmax,ymin,ymax=ax.axis('off')
-    return fig,ax,xmin,ymin,xmax,ymax
+    return fig,ax,xmin,ymin,xmax,ymax,no_bkg
 
 def make_grid(x_grid_size,data_dir,dimensions=None):
     """make a meshgrid. The boundaries can be passed by dimensions as [xmin,xmax,ymin,ymax] or using the raw image dimensions. x_grid_size is the number of cells in the grid along the x axis.
@@ -517,7 +523,7 @@ def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,t
     group['intersec_y']=(A*group['displ_y']-C*(group['x']*group['y_prev']-group['y']*group['x_prev']))/group['intersec_denom']#intesection y_coord
     if plot_steps:
         print "all intercepts"
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame)
         group.plot.scatter(x='intersec_x',y='intersec_y',ax=ax)
         ax.plot([x1,x2],[y1,y2])
         show(fig)
@@ -528,7 +534,7 @@ def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,t
     group=group[ind]
     if plot_steps:
         print "on line intercepts"
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame)
         group.plot.scatter(x='intersec_x',y='intersec_y',ax=ax)
         ax.plot([x1,x2],[y1,y2])
         show(fig)
@@ -539,7 +545,7 @@ def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,t
     group['converging']=group['intersec_vecx']*group['displ_x']+group['intersec_vecy']*group['displ_y'] #scalar product between (I-x) and displacement vectors.
     if plot_steps:
         print "all I-x"
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame)
         ax.quiver(group['x_prev'].values,group['y_prev'].values,group['intersec_vecx'].values,group['intersec_vecy'].values)
         ax.plot([x1,x2],[y1,y2])
         show(fig)
@@ -547,7 +553,7 @@ def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,t
     group=group[group['converging']>0] #if >0 converging towards line. If not discard because crossing is impossible
     if plot_steps:
         print "converging I-x"
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame)
         ax.quiver(group['x_prev'].values,group['y_prev'].values,group['intersec_vecx'].values,group['intersec_vecy'].values)
         ax.plot([x1,x2],[y1,y2])
         show(fig)
@@ -650,7 +656,7 @@ def plot_cmap(plot_dir,label,cmap,vmin,vmax):
     fig.savefig(filename, dpi=300, bbox_inches='tight')
     close('all')
 
-def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,lengthscale=1.,length_ref=0.75,display=False,plot3D=False,elevation=None,angle=None):
+def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,lengthscale=1.,length_ref=0.75,display=False,plot3D=False,elevation=None,angle=None,dim=3):
     """ Plot all cells of a given frame.
         Different groups of cells can be plotted with different colors (data contained in df_list)
         The trajectory of each cell can be plotted with plot_traj
@@ -677,7 +683,7 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
     else:
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df_list[0],data_dir,frame,no_bkg=no_bkg)
+        fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df_list[0],data_dir,frame,no_bkg=no_bkg)
     for k,df in enumerate(df_list):
         groups=groups_list[k]
         group=groups.get_group(frame).reset_index(drop=True)
@@ -693,7 +699,8 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
             track=int(group.loc[i,'traj'])
             s='%d'%(track)
             if hide_labels is False:
-                ax.text(x,y,s,fontsize=5,color='w')
+                color_='k' if no_bkg else 'w'
+                ax.text(x,y,s,fontsize=5,color=color_)
             if plot_traj:
                 #traj size
                 lw_ref=rcParams['lines.linewidth']
@@ -701,7 +708,7 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
                 size_factor=lengthscale*length_ref
                 lw=lw_ref*size_factor; ms=ms_ref*size_factor
                 #plot trajectory
-                traj=get_obj_traj(track_groups,track,max_frame=frame)
+                traj=get_obj_traj(track_groups,track,max_frame=frame,dim=dim)
                 traj_length,c=traj.shape
                 if traj_length>1:
                     if not plot3D:
@@ -754,7 +761,7 @@ def plot_vfield(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False,plot_on_m
         plot_fig,data_mean=plot_mean_vel(df,frame,data_dir,no_bkg=no_bkg,vlim=vlim_mean,axis_on=axis_on,save_plot=False)
         fig,ax,xmin,ymin,xmax,ymax=plot_fig
     else:
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
+        fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
     data=get_map_data(plot_dir,frame)
     norm=plt.Normalize(vlim[0],vlim[1]) if vlim is not None else None
     if black_arrows:
@@ -780,7 +787,7 @@ def plot_div(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
         os.mkdir(plot_dir)
 
     #import image
-    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
+    fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
     X,Y,div=get_map_data(plot_dir,frame)
     div_masked = np.ma.array(div, mask=np.isnan(div))
     [vmin,vmax]= [div_masked.min(),div_masked.max()] if vlim is None else vlim
@@ -805,7 +812,7 @@ def plot_mean_vel(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False,save_pl
         os.mkdir(plot_dir)
 
     #import image
-    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
+    fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
     X,Y,mean_vel=get_map_data(plot_dir,frame)
     mean_vel_masked = np.ma.array(mean_vel, mask=np.isnan(mean_vel))
     [vmin,vmax]= [mean_vel_masked.min(),mean_vel_masked.max()] if vlim is None else vlim
@@ -840,7 +847,7 @@ def plot_z_flow(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
     
-    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
+    fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
     X,Y,flow=get_map_data(plot_dir,frame)
     [vmin,vmax]= [flow.min(),flow.max()] if vlim is None else vlim
     cmap=cm.plasma
@@ -870,7 +877,7 @@ def plot_ROI_avg(df,data_dir,map_kind,frame,ROI_data_list,plot_on_map=False,plot
         os.mkdir(plot_dir)
 
     if plot_on_map:
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame)
 
     plot_data={}
     for i,ROI_data in enumerate(ROI_data_list):
@@ -947,7 +954,7 @@ def plot_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,time
     close()
 
     if plot_on_map:
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame)
         ax.plot(line[:,0],line[:,1])
         ax.arrow(orientation[0,0],orientation[0,1],orientation[1,0]-orientation[0,0],orientation[1,1]-orientation[0,1],shape='full',length_includes_head=True,width=10,color='k')
         filename=osp.join(plot_dir,filename_prefix+'section.png')
@@ -958,7 +965,7 @@ def plot_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,time
 
 #### PLOT_ALL methods
 
-def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,parallelize=False,lengthscale=1.,length_ref=0.75,plot3D=False,elevation=None,angle=None):
+def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,no_bkg=False,parallelize=False,lengthscale=1.,length_ref=0.75,plot3D=False,elevation=None,angle=None,dim=3):
     plot_dir=osp.join(data_dir,'traj')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
@@ -973,7 +980,7 @@ def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,n
         Parallel(n_jobs=num_cores)(delayed(plot_cells)(df_list,groups_list,frame,data_dir,plot_traj,z_lim,hide_labels,no_bkg,lengthscale) for frame in df['frame'].unique())
     else:
         for frame in df['frame'].unique():
-            plot_cells(df_list,groups_list,frame,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,lengthscale=lengthscale,length_ref=length_ref,plot3D=plot3D,elevation=elevation,angle=angle)
+            plot_cells(df_list,groups_list,frame,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,lengthscale=lengthscale,length_ref=length_ref,plot3D=plot3D,elevation=elevation,angle=angle,dim=dim)
 
 def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refresh=False,axis_on=False,plot_on_mean=False,black_arrows=False):
     # Maps of all frames are computed through the get_vlim function
@@ -1206,9 +1213,11 @@ def plot_all_XY_flow(df,data_dir,line=None,orientation=None,frame_subset=None,wi
 ###########   CONTAINER METHODS   ###############################
 #################################################################
 
-def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,linewidth=1.,plot3D=False):
+def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,linewidth=1.,plot3D=False,z_lim=None):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
-    z_lim=[df['z_rel'].min(),df['z_rel'].max()] if dim==3 else []
+    print dim
+    if z_lim is None:
+        z_lim=[df['z_rel'].min(),df['z_rel'].max()] if dim==3 else []
     df_list=[]
 
     subset=raw_input('By what do you want to filter? Type: none, ROI, track_length. \t ')
@@ -1223,7 +1232,7 @@ def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_l
         print 'ERROR: not a valid answer'
         return
     
-    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=0.75/linewidth,plot3D=plot3D)
+    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=0.75/linewidth,plot3D=plot3D,dim=dim)
 
 def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None,axis_on=False,plot_on_mean=True,black_arrows=True):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
