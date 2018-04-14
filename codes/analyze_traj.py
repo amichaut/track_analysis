@@ -192,7 +192,7 @@ def get_background(df,data_dir,frame,no_bkg=False,image_dir=None,orig=None,axis_
         xmin,xmax,ymin,ymax=ax.axis('on')
     else: 
         xmin,xmax,ymin,ymax=ax.axis('off')
-    return fig,ax,xmin,ymin,xmax,ymax
+    return fig,ax,xmin,ymin,xmax,ymax,no_bkg
 
 def make_grid(x_grid_size,data_dir,dimensions=None):
     """make a meshgrid. The boundaries can be passed by dimensions as [xmin,xmax,ymin,ymax] or using the raw image dimensions. x_grid_size is the number of cells in the grid along the x axis.
@@ -538,7 +538,7 @@ def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,t
     group['intersec_y']=(A*group['displ_y']-C*(group['x']*group['y_prev']-group['y']*group['x_prev']))/group['intersec_denom']#intesection y_coord
     if plot_steps:
         print "all intercepts"
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame)
         group.plot.scatter(x='intersec_x',y='intersec_y',ax=ax)
         ax.plot([x1,x2],[y1,y2])
         show(fig)
@@ -549,7 +549,7 @@ def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,t
     group=group[ind]
     if plot_steps:
         print "on line intercepts"
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame)
         group.plot.scatter(x='intersec_x',y='intersec_y',ax=ax)
         ax.plot([x1,x2],[y1,y2])
         show(fig)
@@ -560,7 +560,7 @@ def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,t
     group['converging']=group['intersec_vecx']*group['displ_x']+group['intersec_vecy']*group['displ_y'] #scalar product between (I-x) and displacement vectors.
     if plot_steps:
         print "all I-x"
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame)
         ax.quiver(group['x_prev'].values,group['y_prev'].values,group['intersec_vecx'].values,group['intersec_vecy'].values)
         ax.plot([x1,x2],[y1,y2])
         show(fig)
@@ -568,7 +568,7 @@ def compute_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,t
     group=group[group['converging']>0] #if >0 converging towards line. If not discard because crossing is impossible
     if plot_steps:
         print "converging I-x"
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame)
         ax.quiver(group['x_prev'].values,group['y_prev'].values,group['intersec_vecx'].values,group['intersec_vecy'].values)
         ax.plot([x1,x2],[y1,y2])
         show(fig)
@@ -808,7 +808,7 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
     else:
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df_list[0],data_dir,frame,no_bkg=no_bkg)
+        fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df_list[0],data_dir,frame,no_bkg=no_bkg)
     for k,df in enumerate(df_list):
         groups=groups_list[k]
         group=groups.get_group(frame).reset_index(drop=True)
@@ -824,7 +824,8 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
             track=int(group.loc[i,'traj'])
             s='%d'%(track)
             if hide_labels is False:
-                ax.text(x,y,s,fontsize=5,color='w')
+                color_='k' if no_bkg else 'w'
+                ax.text(x,y,s,fontsize=5,color=color_)
             if plot_traj:
                 #traj size
                 lw_ref=rcParams['lines.linewidth']
@@ -885,7 +886,7 @@ def plot_vfield(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False,plot_on_m
         plot_fig,data_mean=plot_mean_vel(df,frame,data_dir,no_bkg=no_bkg,vlim=vlim_mean,axis_on=axis_on,save_plot=False)
         fig,ax,xmin,ymin,xmax,ymax=plot_fig
     else:
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
+        fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
     data=get_map_data(plot_dir,frame)
     norm=plt.Normalize(vlim[0],vlim[1]) if vlim is not None else None
     if black_arrows:
@@ -911,7 +912,7 @@ def plot_div(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
         os.mkdir(plot_dir)
 
     #import image
-    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
+    fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
     X,Y,div=get_map_data(plot_dir,frame)
     div_masked = np.ma.array(div, mask=np.isnan(div))
     [vmin,vmax]= [div_masked.min(),div_masked.max()] if vlim is None else vlim
@@ -936,7 +937,7 @@ def plot_mean_vel(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False,save_pl
         os.mkdir(plot_dir)
 
     #import image
-    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
+    fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
     X,Y,mean_vel=get_map_data(plot_dir,frame)
     mean_vel_masked = np.ma.array(mean_vel, mask=np.isnan(mean_vel))
     [vmin,vmax]= [mean_vel_masked.min(),mean_vel_masked.max()] if vlim is None else vlim
@@ -971,7 +972,7 @@ def plot_z_flow(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
     
-    fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
+    fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
     X,Y,flow=get_map_data(plot_dir,frame)
     [vmin,vmax]= [flow.min(),flow.max()] if vlim is None else vlim
     cmap=cm.plasma
@@ -999,7 +1000,7 @@ def plot_ROI_avg(df,data_dir,map_kind,frame,ROI_data_list,plot_on_map=False,plot
         os.mkdir(plot_dir)
 
     if plot_on_map:
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame)
 
     plot_data={}
     for i,ROI_data in enumerate(ROI_data_list):
@@ -1076,7 +1077,7 @@ def plot_XY_flow(df,data_dir,line,orientation,frame,groups,window_size=None,time
     close()
 
     if plot_on_map:
-        fig,ax,xmin,ymin,xmax,ymax=get_background(df,data_dir,frame)
+        fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame)
         ax.plot(line[:,0],line[:,1])
         ax.arrow(orientation[0,0],orientation[0,1],orientation[1,0]-orientation[0,0],orientation[1,1]-orientation[0,1],shape='full',length_includes_head=True,width=10,color='k')
         filename=osp.join(plot_dir,filename_prefix+'section.png')
