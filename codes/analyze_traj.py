@@ -20,11 +20,11 @@ from lmfit import Parameters, Model
 
 color_list=[c['color'] for c in list(plt.rcParams['axes.prop_cycle'])]
 
-welcome_message="""\n\n WELCOME TO TRACK_ANALYSIS \n Developped and maintained by Arthur Michaut: arthur.michaut@gmail.com \n Last release: 11-06-2017\n\n\n     _''_\n    / o  \\\n  <       |\n    \\    /__\n    /       \\-----\n    /    \\    \\   \\__\n    |     \\_____\\  __>\n     \\--       ___/  \n        \\     /\n         || ||\n         /\\ /\\\n\n"""
-usage_message="""Usage: \n- plot cells analysis using cell_analysis(data_dir,refresh,parallelize,plot_traj,hide_labels,no_bkg,linewidth) \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
-plot_traj (default true) to print the cell trajectories, hide_labels (default True) to hide the cell label, no_bkg (default False) to remove the image background, linewidth being the trajectories width (default=1.0) \n
-- plot maps using map_analysis(data_dir,refresh,parallelize,x_grid_size,no_bkg,z0,dimensions,axis_on) \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
-x_grid_size: number of columns in the grid (default 10), no_bkg (default False) to remove the image background, z0: altitude of the z_flow surface (default None => center of z axis), dimensions ([row,column] default None) to give the image dimension in case of no_bkg, axis_on: display axes along maps (default False),plot_on_mean: plot vfield on mean_vel map (default=True),black_arrows: don't use vz to color code vfield arrows (default=True) 
+welcome_message="""\n\n WELCOME TO TRACK_ANALYSIS \n Developped and maintained by Arthur Michaut: arthur.michaut@gmail.com \n Last release: 04-09-2018\n\n\n     _''_\n    / o  \\\n  <       |\n    \\    /__\n    /       \\-----\n    /    \\    \\   \\__\n    |     \\_____\\  __>\n     \\--       ___/  \n        \\     /\n         || ||\n         /\\ /\\\n\n"""
+usage_message="""Usage: \n- plot cells analysis using cell_analysis(data_dir,refresh,parallelize,plot_traj,hide_labels,no_bkg,linewidth,plot3D) \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
+plot_traj (default true) to print the cell trajectories, hide_labels (default True) to hide the cell label, no_bkg (default False) to remove the image background, linewidth being the trajectories width (default=1.0), plot3D (default:False)\n
+- plot maps using map_analysis(data_dir,refresh,parallelize,x_grid_size,no_bkg,z0,dimensions,axis_on,plot_on_mean,black_arrows) \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
+x_grid_size: number of columns in the grid (default 10), no_bkg (default False) to remove the image background, z0: altitude of the z_flow surface (default None => center of z axis), dimensions ([row,column] default None) to give the image dimension in case of no_bkg, axis_on: display axes along maps (default False),plot_on_mean: plot vfield on mean_vel map (default=True),black_arrows: don't use vz to color code vfield arrows (default=True) \n
 - plot average ROIs using avg_ROIs(data_dir,frame_subset=None,selection_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True) \t data_dir: data directory, frame_subset is a list [first,last], default None: open interactive choice \n
 - plot XY flow through a vertical surface defined by a XY line using XY_flow(data_dir,window_size=None,refresh=False,line=None,orientation=None,frame_subset=None,selection_frame=None,z_depth=None) \t data_dir: data directory, frame_subset is a list [first,last], default None: open interactive choice, window_size = rolling average window in um, default None => interactive choice"""
 
@@ -280,6 +280,7 @@ def compute_div(df,frame,groups,data_dir,grids,lengthscale):
     return data
 
 def compute_mean_vel(df,frame,groups,data_dir,grids):
+    """Uses the vfield data to compute the modulus of the vfield on center_grid (x,y)"""
     print '\rcomputing mean velocity field '+str(frame),
     sys.stdout.flush()
 
@@ -289,6 +290,7 @@ def compute_mean_vel(df,frame,groups,data_dir,grids):
 
     #get avg_vfield
     data=get_map_data(osp.join(data_dir,'vfield'),frame)
+    [x,y]=data[0:2]
     avg_vfield=data[2:]
 
     dim=2 if 'z' not in df.columns else 3 #2d or 3D
@@ -300,8 +302,7 @@ def compute_mean_vel(df,frame,groups,data_dir,grids):
     mean_vel=sqrt(V)
 
     #save data in pickle
-    X,Y=grids[0]
-    data=(X,Y,mean_vel)
+    data=(x,y,mean_vel)
     save_map_data(plot_dir,data,frame)
 
     return data
@@ -465,16 +466,24 @@ def get_subblock_data(X,Y,data,ROI):
 def select_map_ROI(data_dir,map_kind,frame,ROI_list=None):
     """Get data from a map in rectangular ROIs. If ROIs not given, manually drawn with get_ROI."""
     image_dir1=osp.join(data_dir,'raw')
-    if osp.isdir(image_dir1)==False:
-        image_dir1=osp.join(data_dir,map_kind)
 
-    image_dir=osp.join(data_dir,map_kind)
+    map_kind_ = 'vfield' if map_kind in ['vx','vy','vz'] else map_kind
+    if osp.isdir(image_dir1)==False:
+        image_dir1=osp.join(data_dir,map_kind_)
+
+    image_dir=osp.join(data_dir,map_kind_)
     not_found=True
     while not_found:
         if ROI_list is None:
             ROI_list=get_ROI(image_dir1,frame,tool=RectangleTool)
         data=get_map_data(image_dir,frame)
-        X=data[0];Y=data[1];data=data[-1]
+        X=data[0];Y=data[1]
+        if map_kind=='vy':
+            data=data[3]
+        elif map_kind=='vz':
+            data=data[4]            
+        else:
+            data=data[2]
         ROI_data_list=[]
         square_ROI=False
         for ROI in ROI_list:
@@ -995,7 +1004,9 @@ def plot_ROI_avg(df,data_dir,map_kind,frame,ROI_data_list,plot_on_map=False,plot
     close('all')
     print '\rplotting ROI average '+str(frame),
     sys.stdout.flush()
-    plot_dir=osp.join(data_dir,map_kind,'ROI_avg')
+
+    map_kind_ = 'vfield' if map_kind in ['vx','vy','vz'] else map_kind
+    plot_dir=osp.join(data_dir,map_kind_,'ROI_avg')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
 
@@ -1218,7 +1229,9 @@ def plot_all_avg_ROI(df,data_dir,map_kind,frame_subset=None,selection_frame=None
 
     close('all')
 
-    plot_dir=osp.join(data_dir,map_kind,'ROI_avg')
+    map_kind_ = 'vfield' if map_kind in ['vx','vy','vz'] else map_kind 
+
+    plot_dir=osp.join(data_dir,map_kind_,'ROI_avg')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
 
@@ -1437,7 +1450,7 @@ def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=
 
 def avg_ROIs(data_dir,frame_subset=None,selection_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True,refresh=False):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
-    map_kind=raw_input("Give the map wou want to plot your ROIs on (div,mean_vel,z_flow,vfield): ")
+    map_kind=raw_input("Give the map wou want to plot your ROIs on (div,mean_vel,z_flow,vx,vy,vz): ")
     plot_all_avg_ROI(df,data_dir,map_kind,frame_subset=frame_subset,selection_frame=selection_frame,ROI_list=ROI_list,plot_on_map=plot_on_map,plot_section=plot_section,cumulative_plot=cumulative_plot,avg_plot=avg_plot,timescale=timescale)
 
 def XY_flow(data_dir,window_size=None,refresh=False,line=None,orientation=None,frame_subset=None,selection_frame=None,z_depth=None):
@@ -1459,7 +1472,9 @@ def XY_flow(data_dir,window_size=None,refresh=False,line=None,orientation=None,f
 map_dic={'div':{'compute_func':compute_div,'plot_func':plot_div,'cmap_label':'$div(\overrightarrow{v})\ (min^{-1})$'},
      'mean_vel':{'compute_func':compute_mean_vel,'plot_func':plot_mean_vel,'cmap_label':'$v\ (\mu m.min^{-1})$'},
      'z_flow':{'compute_func':compute_z_flow,'plot_func':plot_z_flow,'cmap_label':'cell flow $(min^{-1})$'},
-     'vfield':{'compute_func':compute_vfield,'plot_func':plot_vfield,'cmap_label':'$v_z\ (\mu m.min^{-1})$'}}
+     'vx':{'compute_func':compute_vfield,'plot_func':plot_vfield,'cmap_label':'$v_x\ (\mu m.min^{-1})$'},
+     'vy':{'compute_func':compute_vfield,'plot_func':plot_vfield,'cmap_label':'$v_y\ (\mu m.min^{-1})$'},
+     'vz':{'compute_func':compute_vfield,'plot_func':plot_vfield,'cmap_label':'$v_z\ (\mu m.min^{-1})$'}}
 
 
 ###############################################
