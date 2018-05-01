@@ -122,7 +122,7 @@ def get_data(data_dir,refresh=False,correct_shift=False):
     
     return df,lengthscale,timescale,columns,dim
 
-def get_obj_traj(track_groups,track,max_frame=None,dim=3,shift=None,lengthscale=1.):
+def get_obj_traj(track_groups,track,max_frame=None,dim=3,shift=None,lengthscale=1.,shifted_dim=['y']):
     '''gets the trajectory of an object. track_groups is the output of a groupby(['relabel'])'''
     group=track_groups.get_group(track)
     cols=['frame','t','x','y','z','z_scaled','z_rel','v'] if dim==3 else ['frame','t','x','y','v']
@@ -131,8 +131,8 @@ def get_obj_traj(track_groups,track,max_frame=None,dim=3,shift=None,lengthscale=
         trajectory=trajectory[trajectory['frame']<=max_frame]
     if shift is not None:
         df_comp=pd.merge(trajectory,shift,on=['t','frame'],how='inner')
-        df_comp['x_shifted']=df_comp['x']-df_comp['x0']
-        df_comp['y_shifted']=df_comp['y']-df_comp['y0']
+        df_comp['x_shifted']=df_comp['x']-df_comp['x0'] if 'x' in shifted_dim else df_comp['x']
+        df_comp['y_shifted']=df_comp['y']-df_comp['y0'] if 'y' in shifted_dim else df_comp['y']
         trajectory=df_comp[['frame','t','x_shifted','y_shifted']+cols[4:]].copy()
         trajectory.columns=cols
         # #recalculate v TO BE CHECKED
@@ -146,12 +146,14 @@ def get_obj_traj(track_groups,track,max_frame=None,dim=3,shift=None,lengthscale=
         # trajectory['v']=sqrt(sum_)
     return trajectory.reset_index(drop=True)
 
-def get_shift(data_dir,timescale):
+def get_shift(data_dir,timescale,lengthscale):
     filename=osp.join(data_dir,"shift.csv")
     if osp.exists(filename):
         df=pd.read_csv(filename)
-        df['frame']=df['frame']-1
+        df['frame']=df[df.columns[1]]-1
         df['t']=df['frame']*timescale
+        df['x0']=df['X']*lengthscale
+        df['y0']=df['Y']*lengthscale
         return df
 
 def filter_by_traj_len(df,min_traj_len=1,max_traj_len=None):
@@ -217,7 +219,7 @@ def make_grid(x_grid_size,data_dir,dimensions=None):
     center_grid=meshgrid(arange(xmin+step/2.,xmax,step),arange(ymin+step/2.,ymax,step))
     return node_grid,center_grid
 
-def compute_vfield(df,frame,groups,data_dir,grids=None):
+def compute_vfield(df,frame,groups,data_dir,grids=None,dim=3):
     print '\rcomputing velocity field '+str(frame),
     sys.stdout.flush()
 
@@ -225,13 +227,12 @@ def compute_vfield(df,frame,groups,data_dir,grids=None):
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
 
-    dim=2 if 'z' not in df.columns else 3 #2d or 3D
     coord_list=['vx','vy','vz']
         
     group=groups.get_group(frame).reset_index(drop=True)
 
     if grids is not None:
-        node_grid,center_grid=grids   
+        node_grid,center_grid=grids
         X,Y=node_grid
         x,y=center_grid
         v_field=[zeros((x.shape[0],x.shape[1])) for _ in range(dim)]
@@ -250,7 +251,7 @@ def compute_vfield(df,frame,groups,data_dir,grids=None):
 
     return data
 
-def compute_div(df,frame,groups,data_dir,grids,lengthscale):
+def compute_div(df,frame,groups,data_dir,grids,dim=3,lengthscale=1):
     print '\rcomputing divergence field '+str(frame),
     sys.stdout.flush()
 
@@ -279,7 +280,7 @@ def compute_div(df,frame,groups,data_dir,grids,lengthscale):
 
     return data
 
-def compute_mean_vel(df,frame,groups,data_dir,grids):
+def compute_mean_vel(df,frame,groups,data_dir,grids,dim=3):
     """Uses the vfield data to compute the modulus of the vfield on center_grid (x,y)"""
     print '\rcomputing mean velocity field '+str(frame),
     sys.stdout.flush()
@@ -289,11 +290,10 @@ def compute_mean_vel(df,frame,groups,data_dir,grids):
         os.mkdir(plot_dir)
 
     #get avg_vfield
+    node_grid,center_grid=grids
+    X,Y=node_grid
     data=get_map_data(osp.join(data_dir,'vfield'),frame)
-    [x,y]=data[0:2]
     avg_vfield=data[2:]
-
-    dim=2 if 'z' not in df.columns else 3 #2d or 3D
 
     #compute avg
     V=0
@@ -302,7 +302,7 @@ def compute_mean_vel(df,frame,groups,data_dir,grids):
     mean_vel=sqrt(V)
 
     #save data in pickle
-    data=(x,y,mean_vel)
+    data=(X,Y,mean_vel)
     save_map_data(plot_dir,data,frame)
 
     return data
@@ -415,11 +415,11 @@ def get_map_data(plot_dir,frame):
         print 'ERROR: database does not exist'
     return data
 
-def get_vlim(df,compute_func,groups,data_dir,grids,show_hist=False,**kwargs):
+def get_vlim(df,compute_func,groups,data_dir,grids,dim=3,show_hist=False,**kwargs):
     # compute the max and min over all frames of a map. Compute maps for all frames
     vmin=np.nan;vmax=np.nan #boudaries of colorbar
     for i,frame in enumerate(df['frame'].unique()):
-        data=compute_func(df,frame,groups,data_dir,grids,**kwargs)
+        data=compute_func(df,frame,groups,data_dir,grids,dim,**kwargs)
         data=data[-1]
         if show_hist:
             if i==0:
@@ -709,7 +709,7 @@ def fit_msd(msd,trajectory,save_plot=False,model_bounds={'P':[0,300],'D':[0,1e8]
     else:
         outdir=None
 
-    n=msd['numpoints'][msd['numpoints']>msd['numpoints'].max()*0.7].size #fit MSD only on part with enough statistics
+    # n=msd['numpoints'][msd['numpoints']>msd['numpoints'].max()*0.7].size #fit MSD only on part with enough statistics
     #lmfit model
     mean_vel=trajectory['v'][1:].mean()
     success=False;best=None;logx=False;logy=False
@@ -726,8 +726,17 @@ def fit_msd(msd,trajectory,save_plot=False,model_bounds={'P':[0,300],'D':[0,1e8]
             p=func_model.make_params(D=1,v=1)
             p['D'].set(min=model_bounds['D'][0])
             p['v'].set(min=model_bounds['v'][0])
+        elif model=="pure_diff":
+            func = lambda t,D:4*D*t
+            func_model=Model(func)
+            p=func_model.make_params(D=1)
+            p['D'].set(min=model_bounds['D'][0])
         try:
-            best=func_model.fit(msd['msds'][0:n],t=msd['tau'][0:n],params=p)
+            msd['weights']=1./(msd['msds_std']+1) #to ensure no div by 0
+            # best=func_model.fit(msd['msds'][0:n],t=msd['tau'][0:n],params=p)
+            msd.dropna(inplace=True)
+            best=func_model.fit(msd['msds'].values,t=msd['tau'].values,params=p,weights=msd['numpoints'])
+            
             if best.success==False:
                 print "WARNING: fit_msd failed"
             success=best.success
@@ -745,6 +754,8 @@ def fit_msd(msd,trajectory,save_plot=False,model_bounds={'P':[0,300],'D':[0,1e8]
                 title_ = 'D=%0.2f'%best.best_values['D']+r' $\mu m^2/min$, '+'v=%0.2f'%best.best_values['v']+r' $\mu m/min$'
             elif model=='PRW':
                 title_ = 'P=%0.2f min'%best.best_values['P']
+            elif model=='pure_diff':
+                title_ = 'D=%0.2f'%best.best_values['D']+r' $\mu m^2/min$'
             ax.set_title(title_)
         ax.set_xlabel('lag time (min)')
         ax.set_ylabel(r'MSD ($\mu m^2$)')
@@ -1138,10 +1149,9 @@ def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,n
         for frame in df['frame'].unique():
             plot_cells(df_list,groups_list,frame,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,lengthscale=lengthscale,length_ref=length_ref,plot3D=plot3D,elevation=elevation,angle=angle,dim=dim,shift=shift)
 
-def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refresh=False,axis_on=False,plot_on_mean=False,black_arrows=False):
+def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,dim=3,refresh=False,axis_on=False,plot_on_mean=False,black_arrows=False):
     # Maps of all frames are computed through the get_vlim function
     groups=df.groupby('frame')
-    dim=2 if 'z' not in df.columns else 3 #2d or 3D
     plot_dir=osp.join(data_dir,'vfield')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
@@ -1194,7 +1204,7 @@ def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,refres
         for i,frame in enumerate(df['frame'].unique()):
             plot_vfield(df,frame,data_dir,no_bkg=no_bkg,vlim=vlim,axis_on=axis_on,plot_on_mean=plot_on_mean,black_arrows=black_arrows,vlim_mean=vlim_mean)
 
-def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallelize=False,manual_vlim=False,axis_on=False,**kwargs):
+def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallelize=False,dim=3,manual_vlim=False,axis_on=False,**kwargs):
 
     groups=df.groupby('frame')
 
@@ -1364,8 +1374,15 @@ def plot_all_XY_flow(df,data_dir,line=None,orientation=None,frame_subset=None,wi
     return plot_data_list
 
 def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=True,plot_along_Y=True,origins=None,lengthscale=1.,shift=None):
-    cols=['traj','xmean','ymean','D','v'] if fit_model=="biased_diff" else ['traj','xmean','ymean','P']
-    param_list=cols[3:]
+    if fit_model=="biased_diff":
+        cols=['traj','xmean','ymean','D','v','D_err','v_err']
+        param_list=['D','v']
+    elif fit_model=="PRW":
+        cols=['traj','xmean','ymean','P','P_err']
+        param_list=['P']
+    elif fit_model=="pure_diff":
+        cols=['traj','xmean','ymean','D','D_err']
+        param_list=['D']
     df_out=pd.DataFrame(columns=cols)
     i=0
     for df in df_list:
@@ -1377,7 +1394,10 @@ def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=Tr
             best,speed,success=fit_msd(msd,traj,save_plot=save_plot,model=fit_model,data_dir=data_dir,traj=track)
             if success:
                 param_val=[best.best_values[param] for param in param_list]
-                df_out.loc[i,cols]=[track,traj['x'].mean(),traj['y'].mean()]+param_val
+                errors=[np.nan]*len(param_list)
+                if best.covar is not None:
+                    errors=list(sqrt(best.covar).diagonal())
+                df_out.loc[i,cols]=[track,traj['x'].mean(),traj['y'].mean()]+param_val+errors
                 i+=1
 
     df_out=df_out.apply(pd.to_numeric,args=('ignore',None))
@@ -1409,7 +1429,7 @@ def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=Tr
 ###########   CONTAINER METHODS   ###############################
 #################################################################
 
-def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,linewidth=1.,plot3D=False,MSD_fit=None,z_lim=None,shift_traj=False):
+def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,linewidth=1.,plot3D=False,MSD_fit=None,z_lim=None,shift_traj=False,save_MSD_plot=False):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
     if z_lim is None:
         z_lim=[df['z_rel'].min(),df['z_rel'].max()] if dim==3 else []
@@ -1429,20 +1449,20 @@ def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_l
     
     df_list=[filter_by_traj_len(df,min_traj_len=10)]
 
-    shift=get_shift(data_dir,timescale) if shift_traj else None
+    shift=get_shift(data_dir,timescale,lengthscale) if shift_traj else None
 
     plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=0.75/linewidth,plot3D=plot3D,dim=dim,shift=shift)
     
     if MSD_fit is not None:
-        plot_all_MSD(df_list,data_dir,fit_model=MSD_fit,dim=dim,lengthscale=lengthscale,save_plot=False,shift=shift)
+        plot_all_MSD(df_list,data_dir,fit_model=MSD_fit,dim=dim,lengthscale=lengthscale,save_plot=save_MSD_plot,shift=shift)
 
 def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None,axis_on=False,plot_on_mean=True,black_arrows=True):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
     grids=make_grid(x_grid_size,data_dir,dimensions=dimensions)
-    plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize,refresh=refresh,axis_on=axis_on,plot_on_mean=plot_on_mean,black_arrows=black_arrows)
+    plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize,dim=dim,refresh=refresh,axis_on=axis_on,plot_on_mean=plot_on_mean,black_arrows=black_arrows)
     if grids is not None:
-        plot_all_maps(df,data_dir,grids,'div',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,axis_on=axis_on,lengthscale=lengthscale)
-        plot_all_maps(df,data_dir,grids,'mean_vel',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,manual_vlim=True,axis_on=axis_on)
+        plot_all_maps(df,data_dir,grids,'div',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,axis_on=axis_on,lengthscale=lengthscale)
+        plot_all_maps(df,data_dir,grids,'mean_vel',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=False,axis_on=axis_on)
         # if z0 is None:
         #     z0= df['z_rel'].min() + (df['z_rel'].max()-df['z_rel'].min())/2.
         #     print 'z0=%f'%z0
