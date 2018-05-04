@@ -421,11 +421,11 @@ def get_map_data(plot_dir,frame):
         print 'ERROR: database does not exist'
     return data
 
-def get_vlim(df,compute_func,groups,data_dir,grids,data_coord,dim=3,show_hist=False,**kwargs):
+def get_vlim(df,compute_func,groups,data_dir,grids,data_coord,dim=3,show_hist=False,get_former_data=False,plot_dir=None,**kwargs):
     # compute the max and min over all frames of a map. Compute maps for all frames
     vmin=np.nan;vmax=np.nan #boudaries of colorbar
     for i,frame in enumerate(df['frame'].unique()):
-        data=compute_func(df,frame,groups,data_dir,grids,dim,**kwargs)
+        data=get_map_data(plot_dir,frame) if get_former_data else compute_func(df,frame,groups,data_dir,grids,dim,**kwargs)
         data=data[data_coord]
         if show_hist:
             if i==0:
@@ -1254,6 +1254,12 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
 
     if osp.isdir(osp.join(plot_dir,'data')) is False:
         os.mkdir(osp.join(plot_dir,'data'))
+        if map_kind in ['vx','vy','vz'] and osp.isdir(osp.join(data_dir,'vfield','data')):
+            get_former_data=True
+            plot_dir_=osp.join(data_dir,'vfield')
+        else:
+            get_former_data=False
+            plot_dir_=None
         refresh=True
     if refresh:
         #compute data
@@ -1267,7 +1273,7 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
                 data_coord=3
             else:
                 data_coord=-1
-            vlim=get_vlim(df,map_dic[map_kind]['compute_func'],groups,data_dir,grids,data_coord,show_hist=manual_vlim,**kwargs)
+            vlim=get_vlim(df,map_dic[map_kind]['compute_func'],groups,data_dir,grids,data_coord,show_hist=manual_vlim,get_former_data=get_former_data,plot_dir=plot_dir_,**kwargs)
             pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
 
     vlim=pickle.load( open(osp.join(plot_dir,'data','vlim.p'), "rb" ))
