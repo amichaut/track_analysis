@@ -215,8 +215,14 @@ def make_grid(x_grid_size,data_dir,dimensions=None):
         [xmin,xmax,ymin,ymax] = dimensions
 
     step=float(xmax-xmin)/x_grid_size
-    node_grid=meshgrid(arange(xmin,xmax+step,step),arange(ymin,ymax+step,step))
-    center_grid=meshgrid(arange(xmin+step/2.,xmax,step),arange(ymin+step/2.,ymax,step))
+    y_node_array=arange(ymin,ymax+step,step)
+    if y_node_array[-1]>ymax: #to ensure grid isn't longer than the actual map
+        y_node_array=y_node_array[:-1]
+    y_center_array=arange(ymin+step/2.,ymax,step)
+    if y_center_array[-1]>y_node_array[-1]: #to ensure grid isn't longer than the actual map
+        y_center_array=y_center_array[:-1]
+    node_grid=meshgrid(arange(xmin,xmax+step,step),y_node_array)
+    center_grid=meshgrid(arange(xmin+step/2.,xmax,step),y_center_array)
     return node_grid,center_grid
 
 def compute_vfield(df,frame,groups,data_dir,grids=None,dim=3):
@@ -415,12 +421,12 @@ def get_map_data(plot_dir,frame):
         print 'ERROR: database does not exist'
     return data
 
-def get_vlim(df,compute_func,groups,data_dir,grids,dim=3,show_hist=False,**kwargs):
+def get_vlim(df,compute_func,groups,data_dir,grids,data_coord,dim=3,show_hist=False,**kwargs):
     # compute the max and min over all frames of a map. Compute maps for all frames
     vmin=np.nan;vmax=np.nan #boudaries of colorbar
     for i,frame in enumerate(df['frame'].unique()):
         data=compute_func(df,frame,groups,data_dir,grids,dim,**kwargs)
-        data=data[-1]
+        data=data[data_coord]
         if show_hist:
             if i==0:
                 r,c=data.shape
@@ -977,6 +983,38 @@ def plot_mean_vel(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False,save_pl
     data=[X,Y,mean_vel,mean_vel_masked]
     return [plot_fig,data]
 
+def plot_v_coord(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False,save_plot=True,coord='vx',node_grid=None):
+    close('all')
+    print '\rplotting '+coord+' '+str(frame),
+    sys.stdout.flush()
+    plot_dir=osp.join(data_dir,coord)
+    if osp.isdir(plot_dir)==False:
+        os.mkdir(plot_dir)
+    coord_={'vx':2,'vy':3,'vz':4}
+
+    #import image
+    fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df,data_dir,frame,no_bkg=no_bkg,axis_on=axis_on)
+    data=get_map_data(osp.join(data_dir,'vfield'),frame)
+    data=data[coord_[coord]]
+    data_masked = np.ma.array(data, mask=np.isnan(data))
+    [vmin,vmax]= [data_masked.min(),data_masked.max()] if vlim is None else vlim
+    cmap=cm.plasma; cmap.set_bad('w',alpha=0) #set NAN transparent
+    X,Y=node_grid
+    C=ax.pcolormesh(X,Y,data_masked,cmap=cmap,alpha=0.5,vmin=vmin,vmax=vmax)
+    ax.axis([xmin,xmax,ymin,ymax])
+
+    if axis_on:
+        ax.grid(False)
+        ax.patch.set_visible(False)
+        fig.set_tight_layout(True)
+    if save_plot:
+        filename=osp.join(plot_dir,'%04d.png'%int(frame))
+        fig.savefig(filename, dpi=300)
+
+    plot_fig=[fig,ax,xmin,ymin,xmax,ymax]
+    data=[X,Y,data,data_masked]
+    return [plot_fig,data]
+
 def plot_z_flow(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
     """Plot the flow (defined as the net number of cells going through a surface element in the increasing z direction) through the plane of z=z0"""
     
@@ -1168,7 +1206,7 @@ def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,dim=3,
         #     pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
 
         #compute data
-        vlim=get_vlim(df,compute_vfield,groups,data_dir,grids)
+        vlim=get_vlim(df,compute_vfield,groups,data_dir,grids,-1)
         pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
 
     vlim=pickle.load( open(osp.join(plot_dir,'data','vlim.p'), "rb" ))
@@ -1189,12 +1227,14 @@ def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,dim=3,
                 num_cores = multiprocessing.cpu_count()
                 Parallel(n_jobs=num_cores)(delayed(map_dic['mean_vel']['compute_func'])(df,groups,frame,data_dir,grids,lengthscale) for frame in df['frame'].unique())
             else:
-                vlim_mean=get_vlim(df,map_dic['mean_vel']['compute_func'],groups,data_dir,grids,show_hist=True)
+                vlim_mean=get_vlim(df,map_dic['mean_vel']['compute_func'],groups,data_dir,grids,-1,show_hist=True)
                 pickle.dump(vlim_mean,open(osp.join(mean_dir,'data','vlim.p'),"wb"))
 
         vlim_mean=pickle.load( open(osp.join(mean_dir,'data','vlim.p'), "rb" ))
         #plot colorbar
         plot_cmap(mean_dir,map_dic['mean_vel']['cmap_label'],cm.plasma,vlim_mean[0],vlim_mean[1])
+    else:
+        vlim_mean=None
 
     #plot maps
     if parallelize:
@@ -1213,6 +1253,7 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
         os.mkdir(plot_dir)
 
     if osp.isdir(osp.join(plot_dir,'data')) is False:
+        os.mkdir(osp.join(plot_dir,'data'))
         refresh=True
     if refresh:
         #compute data
@@ -1220,7 +1261,13 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
             num_cores = multiprocessing.cpu_count()
             Parallel(n_jobs=num_cores)(delayed(map_dic[map_kind]['compute_func'])(df,groups,frame,data_dir,grids,lengthscale) for frame in df['frame'].unique())
         else:
-            vlim=get_vlim(df,map_dic[map_kind]['compute_func'],groups,data_dir,grids,show_hist=manual_vlim,**kwargs)
+            if map_kind=='vx':
+                data_coord=2
+            elif map_kind=='vy':
+                data_coord=3
+            else:
+                data_coord=-1
+            vlim=get_vlim(df,map_dic[map_kind]['compute_func'],groups,data_dir,grids,data_coord,show_hist=manual_vlim,**kwargs)
             pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
 
     vlim=pickle.load( open(osp.join(plot_dir,'data','vlim.p'), "rb" ))
@@ -1233,7 +1280,10 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
         Parallel(n_jobs=num_cores)(delayed(plot_z_flow)(df,frame,data_dir,no_bkg,vlim) for frame in df['frame'].unique())
     else:
         for i,frame in enumerate(df['frame'].unique()):
-            map_dic[map_kind]['plot_func'](df,frame,data_dir,no_bkg,vlim,axis_on)
+            if map_kind in ['vx','vy','vz']:
+                map_dic[map_kind]['plot_func'](df,frame,data_dir,no_bkg,vlim,axis_on,coord=map_kind,node_grid=grids[0])
+            else:
+                map_dic[map_kind]['plot_func'](df,frame,data_dir,no_bkg,vlim,axis_on)
 
 def plot_all_avg_ROI(df,data_dir,map_kind,frame_subset=None,selection_frame=None,ROI_list=None,plot_on_map=False,plot_section=True,cumulative_plot=True,avg_plot=True,timescale=1.):
 
@@ -1435,20 +1485,18 @@ def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_l
         z_lim=[df['z_rel'].min(),df['z_rel'].max()] if dim==3 else []
     df_list=[]
 
-    # subset=raw_input('By what do you want to filter? Type: none, ROI, track_length. \t ')
-    # if subset=='none':
-    #     df_list=[df]
-    # elif subset=='ROI':
-    #     df_list=filter_by_ROI(df,data_dir)
-    # elif subset=='track_length':
-    #     min_traj_len=input('Give the minimum track length? (number of frames): ')
-    #     df_list=[filter_by_traj_len(df,min_traj_len=min_traj_len)]
-    # else:
-    #     print 'ERROR: not a valid answer'
-    #     return
+    subset=raw_input('By what do you want to filter? Type: none, ROI, track_length. \t ')
+    if subset=='none':
+        df_list=[df]
+    elif subset=='ROI':
+        df_list=filter_by_ROI(df,data_dir)
+    elif subset=='track_length':
+        min_traj_len=input('Give the minimum track length? (number of frames): ')
+        df_list=[filter_by_traj_len(df,min_traj_len=min_traj_len)]
+    else:
+        print 'ERROR: not a valid answer'
+        return
     
-    df_list=[filter_by_traj_len(df,min_traj_len=10)]
-
     shift=get_shift(data_dir,timescale,lengthscale) if shift_traj else None
 
     plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=0.75/linewidth,plot3D=plot3D,dim=dim,shift=shift)
@@ -1463,6 +1511,9 @@ def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=
     if grids is not None:
         plot_all_maps(df,data_dir,grids,'div',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,axis_on=axis_on,lengthscale=lengthscale)
         plot_all_maps(df,data_dir,grids,'mean_vel',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=False,axis_on=axis_on)
+        plot_all_maps(df,data_dir,grids,'vx',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=False,axis_on=axis_on)
+        plot_all_maps(df,data_dir,grids,'vy',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=False,axis_on=axis_on)
+        plot_all_maps(df,data_dir,grids,'vz',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=False,axis_on=axis_on)
         # if z0 is None:
         #     z0= df['z_rel'].min() + (df['z_rel'].max()-df['z_rel'].min())/2.
         #     print 'z0=%f'%z0
@@ -1486,15 +1537,14 @@ def XY_flow(data_dir,window_size=None,refresh=False,line=None,orientation=None,f
     plot_all_XY_flow(df,data_dir,line=line,orientation=orientation,frame_subset=frame_subset,window_size=window_size,selection_frame=selection_frame,timescale=timescale,lengthscale=lengthscale,z_depth=z_depth)
     
 
-
 ###############################################
 
 map_dic={'div':{'compute_func':compute_div,'plot_func':plot_div,'cmap_label':'$div(\overrightarrow{v})\ (min^{-1})$'},
      'mean_vel':{'compute_func':compute_mean_vel,'plot_func':plot_mean_vel,'cmap_label':'$v\ (\mu m.min^{-1})$'},
      'z_flow':{'compute_func':compute_z_flow,'plot_func':plot_z_flow,'cmap_label':'cell flow $(min^{-1})$'},
-     'vx':{'compute_func':compute_vfield,'plot_func':plot_vfield,'cmap_label':'$v_x\ (\mu m.min^{-1})$'},
-     'vy':{'compute_func':compute_vfield,'plot_func':plot_vfield,'cmap_label':'$v_y\ (\mu m.min^{-1})$'},
-     'vz':{'compute_func':compute_vfield,'plot_func':plot_vfield,'cmap_label':'$v_z\ (\mu m.min^{-1})$'}}
+     'vx':{'compute_func':compute_vfield,'plot_func':plot_v_coord,'cmap_label':'$v_x\ (\mu m.min^{-1})$'},
+     'vy':{'compute_func':compute_vfield,'plot_func':plot_v_coord,'cmap_label':'$v_y\ (\mu m.min^{-1})$'},
+     'vz':{'compute_func':compute_vfield,'plot_func':plot_v_coord,'cmap_label':'$v_z\ (\mu m.min^{-1})$'}}
 
 
 ###############################################
