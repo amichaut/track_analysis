@@ -100,6 +100,22 @@ def get_info(data_dir):
         print "ERROR: info.txt doesn't exist or is not at the right place"
     return info
 
+def get_vlim(data_dir):
+    """info.txt gives the lengthscale in um/px, the frame intervalle delta_t in min and the column names of the table"""
+    filename=osp.join(data_dir,"vlim.txt")
+    if osp.exists(filename):
+        with open(filename) as f:
+            vlim_dict={'vfield':None,'div':None,'mean_vel':None,'vx':None,'vy':None,'vz':None,'z_flow':None}
+            for line in f:
+                for key in vlim_dict.keys():
+                    if (key in line)==True:
+                        if len(line.split())==3:
+                            vlim = line.split()[2].split(',')
+                            vlim_dict[key] = [float(d) for d in vlim]
+    else: 
+        vlim_dict=None
+    return vlim_dict
+
 def get_data(data_dir,refresh=False,correct_shift=False):
     #import
     pickle_fn=osp.join(data_dir,"data_base.p")
@@ -434,7 +450,7 @@ def get_map_data(plot_dir,frame):
         print 'ERROR: database does not exist'
     return data
 
-def get_vlim(df,compute_func,groups,data_dir,grids,data_coord,dim=3,show_hist=False,get_former_data=False,plot_dir=None,**kwargs):
+def compute_vlim(df,compute_func,groups,data_dir,grids,data_coord,dim=3,show_hist=False,get_former_data=False,plot_dir=None,**kwargs):
     # compute the max and min over all frames of a map. Compute maps for all frames
     vmin=np.nan;vmax=np.nan #boudaries of colorbar
     for i,frame in enumerate(df['frame'].unique()):
@@ -1200,8 +1216,8 @@ def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,n
         for frame in df['frame'].unique():
             plot_cells(df_list,groups_list,frame,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,lengthscale=lengthscale,length_ref=length_ref,plot3D=plot3D,elevation=elevation,angle=angle,dim=dim,shift=shift)
 
-def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,dim=3,refresh=False,axis_on=False,plot_on_mean=False,black_arrows=False,manual_vlim=False):
-    # Maps of all frames are computed through the get_vlim function
+def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,dim=3,refresh=False,axis_on=False,plot_on_mean=False,black_arrows=False,manual_vlim=False,force_vlim=None):
+    # Maps of all frames are computed through the compute_vlim function
     groups=df.groupby('frame')
     plot_dir=osp.join(data_dir,'vfield')
     if osp.isdir(plot_dir)==False:
@@ -1215,14 +1231,17 @@ def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,dim=3,
         #     num_cores = multiprocessing.cpu_count()
         #     Parallel(n_jobs=num_cores)(delayed(compute_vfield)(df,groups,frame,data_dir,grids) for frame in df['frame'].unique())
         # else:
-        #     vlim=get_vlim(df,compute_vfield,groups,data_dir,grids)
+        #     vlim=compute_vlim(df,compute_vfield,groups,data_dir,grids)
         #     pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
 
         #compute data
-        vlim=get_vlim(df,compute_vfield,groups,data_dir,grids,-1,dim=dim)
+        vlim=compute_vlim(df,compute_vfield,groups,data_dir,grids,-1,dim=dim)
         pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
 
     vlim=pickle.load( open(osp.join(plot_dir,'data','vlim.p'), "rb" ))
+    if force_vlim is not None:
+        if force_vlim['vfield'] is not None:
+            vlim=force_vlim['vfield']
     #plot colorbar
     if dim==3 and not black_arrows:
         plot_cmap(plot_dir,r'$v_z\ (\mu m.min^{-1})$',cm.plasma,vlim[0],vlim[1])
@@ -1240,12 +1259,15 @@ def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,dim=3,
                 num_cores = multiprocessing.cpu_count()
                 Parallel(n_jobs=num_cores)(delayed(map_dic['mean_vel']['compute_func'])(df,groups,frame,data_dir,grids,lengthscale) for frame in df['frame'].unique())
             else:
-                vlim_mean=get_vlim(df,map_dic['mean_vel']['compute_func'],groups,data_dir,grids,-1,show_hist=manual_vlim,dim=dim)
+                vlim_mean=compute_vlim(df,map_dic['mean_vel']['compute_func'],groups,data_dir,grids,-1,show_hist=manual_vlim,dim=dim)
                 pickle.dump(vlim_mean,open(osp.join(mean_dir,'data','vlim.p'),"wb"))
 
         vlim_mean=pickle.load( open(osp.join(mean_dir,'data','vlim.p'), "rb" ))
+        if force_vlim is not None:
+            if force_vlim['mean_vel'] is not None:
+                vlim_mean=force_vlim['mean_vel']
         #plot colorbar
-        plot_cmap(mean_dir,map_dic['mean_vel']['cmap_label'],cm.plasma,vlim_mean[0],vlim_mean[1])
+        plot_cmap(plot_dir,map_dic['mean_vel']['cmap_label'],cm.plasma,vlim_mean[0],vlim_mean[1])
     else:
         vlim_mean=None
 
@@ -1257,7 +1279,7 @@ def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,dim=3,
         for i,frame in enumerate(df['frame'].unique()):
             plot_vfield(df,frame,data_dir,no_bkg=no_bkg,vlim=vlim,axis_on=axis_on,plot_on_mean=plot_on_mean,black_arrows=black_arrows,vlim_mean=vlim_mean)
 
-def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallelize=False,dim=3,manual_vlim=False,axis_on=False,**kwargs):
+def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallelize=False,dim=3,manual_vlim=False,axis_on=False,force_vlim=None,**kwargs):
 
     groups=df.groupby('frame')
 
@@ -1289,10 +1311,13 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
                 data_coord=3
             else:
                 data_coord=-1
-            vlim=get_vlim(df,map_dic[map_kind]['compute_func'],groups,data_dir,grids,data_coord,dim,show_hist=manual_vlim,get_former_data=get_former_data,plot_dir=plot_dir_,**kwargs)
+            vlim=compute_vlim(df,map_dic[map_kind]['compute_func'],groups,data_dir,grids,data_coord,dim,show_hist=manual_vlim,get_former_data=get_former_data,plot_dir=plot_dir_,**kwargs)
             pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
 
     vlim=pickle.load( open(osp.join(plot_dir,'data','vlim.p'), "rb" ))
+    if force_vlim is not None:
+        if force_vlim[map_kind] is not None:
+            vlim=force_vlim[map_kind]
     #plot colorbar
     plot_cmap(plot_dir,map_dic[map_kind]['cmap_label'],cm.plasma,vlim[0],vlim[1])
 
@@ -1567,22 +1592,23 @@ def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_l
     if MSD_fit is not None:
         plot_all_MSD(df_list,data_dir,fit_model=MSD_fit,dim=dim,lengthscale=lengthscale,save_plot=save_MSD_plot,shift=shift,origins=shift.loc[0,'y0'],avg_wind=avg_wind_along_Y)
 
-def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None,axis_on=False,plot_on_mean=True,black_arrows=True,manual_vlim=True):
+def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None,axis_on=False,plot_on_mean=True,black_arrows=True,manual_vlim=False):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
     if osp.isdir(osp.join(data_dir,'raw'))==False:
         info=get_info(data_dir)
         dimensions=info['dimensions']
     else:
         dimensions=None
+    force_vlim=get_vlim(data_dir)
     grids=make_grid(x_grid_size,data_dir,dimensions=dimensions)
-    plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize,dim=dim,refresh=refresh,axis_on=axis_on,plot_on_mean=plot_on_mean,black_arrows=black_arrows,manual_vlim=manual_vlim)
+    plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize,dim=dim,refresh=refresh,axis_on=axis_on,plot_on_mean=plot_on_mean,black_arrows=black_arrows,manual_vlim=manual_vlim,force_vlim=force_vlim)
     if grids is not None:
-        plot_all_maps(df,data_dir,grids,'div',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,axis_on=axis_on,lengthscale=lengthscale)
-        plot_all_maps(df,data_dir,grids,'mean_vel',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=False,axis_on=axis_on)
-        plot_all_maps(df,data_dir,grids,'vx',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=False,axis_on=axis_on)
-        plot_all_maps(df,data_dir,grids,'vy',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=False,axis_on=axis_on)
+        plot_all_maps(df,data_dir,grids,'div',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,axis_on=axis_on,lengthscale=lengthscale,force_vlim=force_vlim)
+        plot_all_maps(df,data_dir,grids,'mean_vel',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=manual_vlim,axis_on=axis_on,force_vlim=force_vlim)
+        plot_all_maps(df,data_dir,grids,'vx',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=manual_vlim,axis_on=axis_on,force_vlim=force_vlim)
+        plot_all_maps(df,data_dir,grids,'vy',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=manual_vlim,axis_on=axis_on,force_vlim=force_vlim)
         if dim==3:
-            plot_all_maps(df,data_dir,grids,'vz',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=False,axis_on=axis_on)
+            plot_all_maps(df,data_dir,grids,'vz',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=manual_vlim,axis_on=axis_on,force_vlim=force_vlim)
         # if z0 is None:
         #     z0= df['z_rel'].min() + (df['z_rel'].max()-df['z_rel'].min())/2.
         #     print 'z0=%f'%z0

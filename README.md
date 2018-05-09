@@ -7,6 +7,7 @@ This codes provides different functions to analyze tracking data of cells over t
 * a 'table.txt' file containing the data of the tracking (without the columns name)
 * a 'info.txt' file containing the timestep length in min, the lengthscale in um/px and the name of the columns. Stick with the format presented in example/
 * (optional) a 'raw' directory containing the pictures of the movie. Only 'png' format and labeled with a four-digit number starting at 0 (ie. as 0000.png for the first one)
+* (optional) a 'vlim.txt' containing the color limits for the color map. One map per line with the following format: <map_name> : lower_lim,upper_lim
 
 ### How do I run the code ###
 * Open 'analyze_traj.py' in a IPython terminal: open terminal and run the command: %run <path_to_analyze_traj.py> (you can just drag and drop the file on the terminal after %run )
