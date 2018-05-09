@@ -20,9 +20,9 @@ from lmfit import Parameters, Model
 
 color_list=[c['color'] for c in list(plt.rcParams['axes.prop_cycle'])]
 
-welcome_message="""\n\n WELCOME TO TRACK_ANALYSIS \n Developped and maintained by Arthur Michaut: arthur.michaut@gmail.com \n Last release: 04-09-2018\n\n\n     _''_\n    / o  \\\n  <       |\n    \\    /__\n    /       \\-----\n    /    \\    \\   \\__\n    |     \\_____\\  __>\n     \\--       ___/  \n        \\     /\n         || ||\n         /\\ /\\\n\n"""
-usage_message="""Usage: \n- plot cells analysis using cell_analysis(data_dir,refresh,parallelize,plot_traj,hide_labels,no_bkg,linewidth,plot3D) \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
-plot_traj (default true) to print the cell trajectories, hide_labels (default True) to hide the cell label, no_bkg (default False) to remove the image background, linewidth being the trajectories width (default=1.0), plot3D (default:False)\n
+welcome_message="""\n\n WELCOME TO TRACK_ANALYSIS \n Developped and maintained by Arthur Michaut: arthur.michaut@gmail.com \n Last release: 05-09-2018\n\n\n     _''_\n    / o  \\\n  <       |\n    \\    /__\n    /       \\-----\n    /    \\    \\   \\__\n    |     \\_____\\  __>\n     \\--       ___/  \n        \\     /\n         || ||\n         /\\ /\\\n\n"""
+usage_message="""Usage: \n- plot cells analysis using cell_analysis(data_dir,refresh,parallelize,plot_traj,hide_labels,no_bkg,linewidth,plot3D,min_traj_len,frame_subset) \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
+plot_traj (default true) to print the cell trajectories, hide_labels (default True) to hide the cell label, no_bkg (default False) to remove the image background, linewidth being the trajectories width (default=1.0), plot3D (default:False), frame_subset: to plot only on a subset of frames [first,last]\n
 - plot maps using map_analysis(data_dir,refresh,parallelize,x_grid_size,no_bkg,z0,dimensions,axis_on,plot_on_mean,black_arrows) \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
 x_grid_size: number of columns in the grid (default 10), no_bkg (default False) to remove the image background, z0: altitude of the z_flow surface (default None => center of z axis), dimensions ([row,column] default None) to give the image dimension in case of no_bkg, axis_on: display axes along maps (default False),plot_on_mean: plot vfield on mean_vel map (default=True),black_arrows: don't use vz to color code vfield arrows (default=True) \n
 - plot average ROIs using avg_ROIs(data_dir,frame_subset=None,selection_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True) \t data_dir: data directory, frame_subset is a list [first,last], default None: open interactive choice \n
@@ -80,7 +80,7 @@ def get_info(data_dir):
     filename=osp.join(data_dir,"info.txt")
     if osp.exists(filename):
         with open(filename) as f:
-            info={'lengthscale':-1,'delta_t':-1,'columns':-1}
+            info={'lengthscale':-1,'delta_t':-1,'columns':-1,'dimensions':-1}
             for line in f:        
                 if ('lengthscale' in line)==True:
                     if len(line.split())==3:
@@ -91,6 +91,11 @@ def get_info(data_dir):
                 elif ('columns' in line)==True:
                     if len(line.split())==3:
                         info['columns'] = line.split()[2].split(',')
+                elif ('dimensions' in line)==True:
+                    if len(line.split())==3:
+                        dimensions = line.split()[2].split(',')
+                        info['dimensions'] = [int(d) for d in dimensions]
+
     else: 
         print "ERROR: info.txt doesn't exist or is not at the right place"
     return info
@@ -107,9 +112,10 @@ def get_data(data_dir,refresh=False,correct_shift=False):
                 print "WARNING: "+inf+" not provided in info.txt"
         ## WARNING lengthscale is defined in the whole code in px/um so lengthscale=1/lengthscale
         lengthscale=1./info["lengthscale"];timescale=info["delta_t"];columns=info["columns"]
-        df=pd.DataFrame(data[:,1:],columns=columns) 
+        df=pd.DataFrame(data[:,1:],columns=columns)
+        df=df.loc[:, (df != 0).any(axis=0)] #remove columns filled with zeros
         #scale data
-        dimensions=['x','y','z'] if 'z' in columns else ['x','y']
+        dimensions=['x','y','z'] if 'z' in df.columns else ['x','y']
         dim=len(dimensions)
         scale_dim(df,dimensions,timescale,lengthscale)
         compute_parameters(df,dimensions)
@@ -122,7 +128,7 @@ def get_data(data_dir,refresh=False,correct_shift=False):
     
     return df,lengthscale,timescale,columns,dim
 
-def get_obj_traj(track_groups,track,max_frame=None,dim=3,shift=None,lengthscale=1.,shifted_dim=['y']):
+def get_obj_traj(track_groups,track,max_frame=None,dim=3,shift=None,lengthscale=1.):
     '''gets the trajectory of an object. track_groups is the output of a groupby(['relabel'])'''
     group=track_groups.get_group(track)
     cols=['frame','t','x','y','z','z_scaled','z_rel','v'] if dim==3 else ['frame','t','x','y','v']
@@ -130,10 +136,16 @@ def get_obj_traj(track_groups,track,max_frame=None,dim=3,shift=None,lengthscale=
     if max_frame is not None:
         trajectory=trajectory[trajectory['frame']<=max_frame]
     if shift is not None:
-        df_comp=pd.merge(trajectory,shift,on=['t','frame'],how='inner')
-        df_comp['x_shifted']=df_comp['x']-df_comp['x0'] if 'x' in shifted_dim else df_comp['x']
-        df_comp['y_shifted']=df_comp['y']-df_comp['y0'] if 'y' in shifted_dim else df_comp['y']
-        trajectory=df_comp[['frame','t','x_shifted','y_shifted']+cols[4:]].copy()
+        df_comp=pd.merge(trajectory,shift,on=['t','frame'],how='inner') #shift only on subset of common frames
+        r_orig = ['x','y','z'] if dim==3 else ['x','y']
+        r_shift = ['x0','y0','z0'] if dim==3 else ['x0','y0']
+        r_shifted = ['x_shifted','y_shifted','z_shifted'] if dim==3 else ['x_shifted','y_shifted']
+        for i,r in enumerate(r_shift):
+            if r in shift.columns:
+                df_comp[r_shifted[i]]=df_comp[r_orig[i]]-df_comp[r]+df_comp.loc[0,r] #shifted(t)=original(t)-shift(t)+shift(t=0) so the first point of the trajectory starts at the same point
+            else:
+                df_comp[r_shifted[i]]=df_comp[r_orig[i]]
+        trajectory=df_comp[['frame','t']+r_shifted+cols[2+len(r_shifted):]].copy()
         trajectory.columns=cols
         # #recalculate v TO BE CHECKED
         # dimensions=['x','y','z'] if dim==3 else ['x','y']
@@ -147,13 +159,14 @@ def get_obj_traj(track_groups,track,max_frame=None,dim=3,shift=None,lengthscale=
     return trajectory.reset_index(drop=True)
 
 def get_shift(data_dir,timescale,lengthscale):
+    """Gets the trajectory of the shifting reference. Should be a cvs table with coordinates in px and frame definition: first=0 (can start at any moment though) """
     filename=osp.join(data_dir,"shift.csv")
     if osp.exists(filename):
         df=pd.read_csv(filename)
-        df['frame']=df[df.columns[1]]-1
         df['t']=df['frame']*timescale
-        df['x0']=df['X']*lengthscale
-        df['y0']=df['Y']*lengthscale
+        for r in ['x0','y0','z0']:
+            if r in df.columns:
+                df[r]=df[r]*lengthscale
         return df
 
 def filter_by_traj_len(df,min_traj_len=1,max_traj_len=None):
@@ -1187,7 +1200,7 @@ def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,n
         for frame in df['frame'].unique():
             plot_cells(df_list,groups_list,frame,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,lengthscale=lengthscale,length_ref=length_ref,plot3D=plot3D,elevation=elevation,angle=angle,dim=dim,shift=shift)
 
-def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,dim=3,refresh=False,axis_on=False,plot_on_mean=False,black_arrows=False):
+def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,dim=3,refresh=False,axis_on=False,plot_on_mean=False,black_arrows=False,manual_vlim=False):
     # Maps of all frames are computed through the get_vlim function
     groups=df.groupby('frame')
     plot_dir=osp.join(data_dir,'vfield')
@@ -1206,13 +1219,13 @@ def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,dim=3,
         #     pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
 
         #compute data
-        vlim=get_vlim(df,compute_vfield,groups,data_dir,grids,-1)
+        vlim=get_vlim(df,compute_vfield,groups,data_dir,grids,-1,dim=dim)
         pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
 
     vlim=pickle.load( open(osp.join(plot_dir,'data','vlim.p'), "rb" ))
     #plot colorbar
     if dim==3 and not black_arrows:
-        plot_cmap(plot_dir,'$v_z\ (\mu m.min^{-1})$',cm.plasma,vlim[0],vlim[1])
+        plot_cmap(plot_dir,r'$v_z\ (\mu m.min^{-1})$',cm.plasma,vlim[0],vlim[1])
 
     if plot_on_mean:
         mean_dir=osp.join(data_dir,'mean_vel')
@@ -1227,7 +1240,7 @@ def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,dim=3,
                 num_cores = multiprocessing.cpu_count()
                 Parallel(n_jobs=num_cores)(delayed(map_dic['mean_vel']['compute_func'])(df,groups,frame,data_dir,grids,lengthscale) for frame in df['frame'].unique())
             else:
-                vlim_mean=get_vlim(df,map_dic['mean_vel']['compute_func'],groups,data_dir,grids,-1,show_hist=True)
+                vlim_mean=get_vlim(df,map_dic['mean_vel']['compute_func'],groups,data_dir,grids,-1,show_hist=manual_vlim,dim=dim)
                 pickle.dump(vlim_mean,open(osp.join(mean_dir,'data','vlim.p'),"wb"))
 
         vlim_mean=pickle.load( open(osp.join(mean_dir,'data','vlim.p'), "rb" ))
@@ -1252,14 +1265,17 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
 
+    #in the case of velocity coordinate don't recompute the data but get them from the vfield folder
+    if map_kind in ['vx','vy','vz'] and osp.isdir(osp.join(data_dir,'vfield','data')):
+        get_former_data=True
+        plot_dir_=osp.join(data_dir,'vfield')
+    else:
+        get_former_data=False
+        plot_dir_=None
+
+    #force refresh if the data does not exist
     if osp.isdir(osp.join(plot_dir,'data')) is False:
         os.mkdir(osp.join(plot_dir,'data'))
-        if map_kind in ['vx','vy','vz'] and osp.isdir(osp.join(data_dir,'vfield','data')):
-            get_former_data=True
-            plot_dir_=osp.join(data_dir,'vfield')
-        else:
-            get_former_data=False
-            plot_dir_=None
         refresh=True
     if refresh:
         #compute data
@@ -1273,7 +1289,7 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
                 data_coord=3
             else:
                 data_coord=-1
-            vlim=get_vlim(df,map_dic[map_kind]['compute_func'],groups,data_dir,grids,data_coord,show_hist=manual_vlim,get_former_data=get_former_data,plot_dir=plot_dir_,**kwargs)
+            vlim=get_vlim(df,map_dic[map_kind]['compute_func'],groups,data_dir,grids,data_coord,dim,show_hist=manual_vlim,get_former_data=get_former_data,plot_dir=plot_dir_,**kwargs)
             pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
 
     vlim=pickle.load( open(osp.join(plot_dir,'data','vlim.p'), "rb" ))
@@ -1429,7 +1445,7 @@ def plot_all_XY_flow(df,data_dir,line=None,orientation=None,frame_subset=None,wi
 
     return plot_data_list
 
-def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=True,plot_along_Y=True,origins=None,lengthscale=1.,shift=None):
+def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=True,plot_along_Y=True,origins=None,lengthscale=1.,shift=None,avg_wind=None,):
     if fit_model=="biased_diff":
         cols=['traj','xmean','ymean','D','v','D_err','v_err']
         param_list=['D','v']
@@ -1457,16 +1473,33 @@ def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=Tr
                 i+=1
 
     df_out=df_out.apply(pd.to_numeric,args=('ignore',None))
-    
+
+    #moving average along Y axis with regular spacing dY defined as 1/5 of avg_window
+    if avg_wind is not None:
+        dY = avg_wind/5.
+        reg_Y = arange(0,df_out['ymean'].max(),dY)
+        cols_=['y']+[p+'_mean' for p in param_list]+[p+'_std' for p in param_list]
+        init_array=np.empty((reg_Y.shape[0],len(cols_)-1)) * np.nan
+        init_array=np.concatenate((reg_Y[:,None],init_array),axis=1)
+        df_reg=pd.DataFrame(init_array,columns=cols_)
+        for i,y in enumerate(reg_Y):
+            ind = ((df_out['ymean']>=y) & ((df_out['ymean']<y+avg_wind)))
+            mean_ = df_out[ind][param_list].mean()
+            std_ = df_out[ind][param_list].std()
+            for param in param_list:
+                df_reg.loc[i,param+'_mean']=mean_[param]
+                df_reg.loc[i,param+'_std']=std_[param]
+        df_reg['y']=df_reg['y']+avg_wind/2. #shift y in the middle of the window
+        
     if origins is not None:
-        for k,origin in enumerate(origins):
-            df_out[cols[k+1]]=abs(df_out[cols[k+1]]-origin)/lengthscale
+        df_out['ymean']=abs(df_out['ymean']-origins)/lengthscale
 
     if to_csv:
         outdir=osp.join(data_dir,'MSD')
         if osp.isdir(outdir) is False:
             os.mkdir(outdir)
         df_out.to_csv(osp.join(outdir,'all_MSD_fit.csv'))
+        df_reg.to_csv(osp.join(outdir,'mean_along_Y.csv'))
 
     if plot_along_Y is not None:
         lab_dict={'v':r'$\langle v \rangle \ \mu m/min$','D':r'$D \ \mu m^2/min$'}
@@ -1474,9 +1507,17 @@ def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=Tr
             fig,ax=plt.subplots(1,1)
             df_out.plot.scatter(x='ymean',y=param,ax=ax)
             ax.set_ylabel(lab_dict[param])
-            xlab='position along Y axis (px)' if origins is None else r'distance to origin ($\mu m$)'
+            xlab='position along Y axis (px)' if origins is None else r'distance to anterior ($\mu m$)'
             ax.set_xlabel(xlab)
             fig.savefig(osp.join(outdir,param+'_along_Y.svg'))
+
+            if avg_wind is not None:
+                fig,ax=plt.subplots(1,1)
+                df_reg.plot.scatter(x='y',y=param+'_mean',yerr=param+'_std',ax=ax)
+                ax.set_ylabel(lab_dict[param])
+                xlab='position along Y axis (px)' if origins is None else r'distance to anterior ($\mu m$)'
+                ax.set_xlabel(xlab)
+                fig.savefig(osp.join(outdir,param+'_mean_along_Y.svg'))
 
     return df_out
 
@@ -1485,41 +1526,63 @@ def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=Tr
 ###########   CONTAINER METHODS   ###############################
 #################################################################
 
-def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,linewidth=1.,plot3D=False,MSD_fit=None,z_lim=None,shift_traj=False,save_MSD_plot=False):
+def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,linewidth=1.,plot3D=False,MSD_fit=None,z_lim=None,shift_traj=False,save_MSD_plot=False,min_traj_len=None,avg_wind_along_Y=None,frame_subset=None):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
     if z_lim is None:
         z_lim=[df['z_rel'].min(),df['z_rel'].max()] if dim==3 else []
     df_list=[]
 
-    subset=raw_input('By what do you want to filter? Type: none, ROI, track_length. \t ')
-    if subset=='none':
-        df_list=[df]
-    elif subset=='ROI':
-        df_list=filter_by_ROI(df,data_dir)
-    elif subset=='track_length':
-        min_traj_len=input('Give the minimum track length? (number of frames): ')
-        df_list=[filter_by_traj_len(df,min_traj_len=min_traj_len)]
+    if min_traj_len is None:
+        subset=raw_input('By what do you want to filter? Type: none, ROI, track_length, frame_subset. \t ')
+        if subset=='none':
+            df_list=[df]
+        elif subset=='ROI':
+            df_list=filter_by_ROI(df,data_dir)
+        elif subset=='track_length':
+            min_traj_len=input('Give the minimum track length? (number of frames): ')
+            df_list=[filter_by_traj_len(df,min_traj_len=min_traj_len)]
+        elif subset=='frame_subset':
+            frame_subset=input('Give the frame subset? (first,last): ')
+            df=df[((df['frame']>=frame_subset[0]) & (df['frame']<=frame_subset[1]))]
+            df_list=[df]
+        else:
+            print 'ERROR: not a valid answer'
+            return
     else:
-        print 'ERROR: not a valid answer'
-        return
+        if frame_subset is not None:
+            df=df[((df['frame']>=frame_subset[0]) & (df['frame']<=frame_subset[1]))]
+        df_list=[filter_by_traj_len(df,min_traj_len=min_traj_len)]
     
+    if frame_subset is not None:
+        df_list_=[]
+        for df in df_list:
+            df=df[((df['frame']>=frame_subset[0]) & (df['frame']<=frame_subset[1]))]
+            df_list_.append(df)
+        df_list=df_list_
+
     shift=get_shift(data_dir,timescale,lengthscale) if shift_traj else None
 
-    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=0.75/linewidth,plot3D=plot3D,dim=dim,shift=shift)
+    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=0.75/linewidth,plot3D=plot3D,dim=dim,shift=None)
     
     if MSD_fit is not None:
-        plot_all_MSD(df_list,data_dir,fit_model=MSD_fit,dim=dim,lengthscale=lengthscale,save_plot=save_MSD_plot,shift=shift)
+        plot_all_MSD(df_list,data_dir,fit_model=MSD_fit,dim=dim,lengthscale=lengthscale,save_plot=save_MSD_plot,shift=shift,origins=shift.loc[0,'y0'],avg_wind=avg_wind_along_Y)
 
-def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None,axis_on=False,plot_on_mean=True,black_arrows=True):
+def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None,axis_on=False,plot_on_mean=True,black_arrows=True,manual_vlim=True):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
+    if osp.isdir(osp.join(data_dir,'raw'))==False:
+        info=get_info(data_dir)
+        dimensions=info['dimensions']
+    else:
+        dimensions=None
     grids=make_grid(x_grid_size,data_dir,dimensions=dimensions)
-    plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize,dim=dim,refresh=refresh,axis_on=axis_on,plot_on_mean=plot_on_mean,black_arrows=black_arrows)
+    plot_all_vfield(df,data_dir,grids=grids,no_bkg=no_bkg,parallelize=parallelize,dim=dim,refresh=refresh,axis_on=axis_on,plot_on_mean=plot_on_mean,black_arrows=black_arrows,manual_vlim=manual_vlim)
     if grids is not None:
         plot_all_maps(df,data_dir,grids,'div',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,axis_on=axis_on,lengthscale=lengthscale)
         plot_all_maps(df,data_dir,grids,'mean_vel',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=False,axis_on=axis_on)
         plot_all_maps(df,data_dir,grids,'vx',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=False,axis_on=axis_on)
         plot_all_maps(df,data_dir,grids,'vy',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=False,axis_on=axis_on)
-        plot_all_maps(df,data_dir,grids,'vz',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=False,axis_on=axis_on)
+        if dim==3:
+            plot_all_maps(df,data_dir,grids,'vz',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,dim=dim,manual_vlim=False,axis_on=axis_on)
         # if z0 is None:
         #     z0= df['z_rel'].min() + (df['z_rel'].max()-df['z_rel'].min())/2.
         #     print 'z0=%f'%z0
@@ -1545,12 +1608,12 @@ def XY_flow(data_dir,window_size=None,refresh=False,line=None,orientation=None,f
 
 ###############################################
 
-map_dic={'div':{'compute_func':compute_div,'plot_func':plot_div,'cmap_label':'$div(\overrightarrow{v})\ (min^{-1})$'},
-     'mean_vel':{'compute_func':compute_mean_vel,'plot_func':plot_mean_vel,'cmap_label':'$v\ (\mu m.min^{-1})$'},
+map_dic={'div':{'compute_func':compute_div,'plot_func':plot_div,'cmap_label':r'$div(\overrightarrow{v})\ (min^{-1})$'},
+     'mean_vel':{'compute_func':compute_mean_vel,'plot_func':plot_mean_vel,'cmap_label':r'$v\ (\mu m.min^{-1})$'},
      'z_flow':{'compute_func':compute_z_flow,'plot_func':plot_z_flow,'cmap_label':'cell flow $(min^{-1})$'},
-     'vx':{'compute_func':compute_vfield,'plot_func':plot_v_coord,'cmap_label':'$v_x\ (\mu m.min^{-1})$'},
-     'vy':{'compute_func':compute_vfield,'plot_func':plot_v_coord,'cmap_label':'$v_y\ (\mu m.min^{-1})$'},
-     'vz':{'compute_func':compute_vfield,'plot_func':plot_v_coord,'cmap_label':'$v_z\ (\mu m.min^{-1})$'}}
+     'vx':{'compute_func':compute_vfield,'plot_func':plot_v_coord,'cmap_label':r'$v_x\ (\mu m.min^{-1})$'},
+     'vy':{'compute_func':compute_vfield,'plot_func':plot_v_coord,'cmap_label':r'$v_y\ (\mu m.min^{-1})$'},
+     'vz':{'compute_func':compute_vfield,'plot_func':plot_v_coord,'cmap_label':r'$v_z\ (\mu m.min^{-1})$'}}
 
 
 ###############################################
