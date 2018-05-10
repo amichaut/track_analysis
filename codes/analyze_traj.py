@@ -693,7 +693,7 @@ def select_frame_list(df,frame_subset=None):
 
     # select frame_list
     if frame_subset is None: #if no subset
-        frame_list=df['frame'].unique()
+        frame_list=np.sort(df['frame'].unique())
     elif type(frame_subset) is list:
         frame_list = range(frame_subset[0],frame_subset[1]+1)
     elif type(frame_subset) is int:
@@ -1085,8 +1085,7 @@ def plot_ROI_avg(df,data_dir,map_kind,frame,ROI_data_list,plot_on_map=False,plot
     print '\rplotting ROI average '+str(frame),
     sys.stdout.flush()
 
-    map_kind_ = 'vfield' if map_kind in ['vx','vy','vz'] else map_kind
-    plot_dir=osp.join(data_dir,map_kind_,'ROI_avg')
+    plot_dir=osp.join(data_dir,map_kind,'ROI_avg')
     if osp.isdir(plot_dir)==False:
         os.mkdir(plot_dir)
 
@@ -1193,7 +1192,7 @@ def plot_hist_persistence_length(data_dir,track_groups,tracks,minimal_traj_lengt
     else:
         pers_lengths.plot.hist()
         ylabel('trajectories count')
-    xlabel('persistence length ($\mu m$) ')
+    xlabel(r'persistence length ($\mu m$) ')
     filename = osp.join(data_dir,'persistence_lenght.svg')
     savefig(filename, dpi=300, bbox_inches='tight')
     close()
@@ -1209,7 +1208,7 @@ def plot_all_cells(df_list,data_dir,plot_traj=False,z_lim=[],hide_labels=False,n
     groups_list=[df.groupby('frame') for df in df_list]
 
     if len(z_lim)==2:
-        plot_cmap(plot_dir,'$z\ (\mu m)$',cm.plasma,z_lim[0],z_lim[1])
+        plot_cmap(plot_dir,r'$z\ (\mu m)$',cm.plasma,z_lim[0],z_lim[1])
 
     if parallelize:
         num_cores = multiprocessing.cpu_count()
@@ -1240,6 +1239,7 @@ def plot_all_vfield(df,data_dir,grids=None,no_bkg=False,parallelize=False,dim=3,
         vlim=compute_vlim(df,compute_vfield,groups,data_dir,grids,-1,dim=dim)
         pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
 
+    pickle.dump(grids,open(osp.join(plot_dir,'data','grids.p'),"wb"))
     vlim=pickle.load( open(osp.join(plot_dir,'data','vlim.p'), "rb" ))
     if force_vlim is not None:
         if force_vlim['vfield'] is not None:
@@ -1338,12 +1338,6 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
 def plot_all_avg_ROI(df,data_dir,map_kind,frame_subset=None,selection_frame=None,ROI_list=None,plot_on_map=False,plot_section=True,cumulative_plot=True,avg_plot=True,timescale=1.):
 
     close('all')
-
-    map_kind_ = 'vfield' if map_kind in ['vx','vy','vz'] else map_kind 
-
-    plot_dir=osp.join(data_dir,map_kind_,'ROI_avg')
-    if osp.isdir(plot_dir)==False:
-        os.mkdir(plot_dir)
 
     if selection_frame is None:
         selection_frame=input("Give the frame number on which you want to draw your ROIs: ")
