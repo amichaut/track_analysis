@@ -512,7 +512,9 @@ def select_map_ROI(data_dir,map_kind,frame,ROI_list=None):
         if ROI_list is None:
             ROI_list=get_ROI(image_dir1,frame,tool=RectangleTool)
         data=get_map_data(image_dir,frame)
-        X=data[0];Y=data[1]
+        grids=pickle.load( open(osp.join(image_dir,'data','grids.p'), "rb" ))
+        node_grid,center_grid=grids
+        x_,y_=center_grid
         if map_kind=='vy':
             data=data[3]
         elif map_kind=='vz':
@@ -522,7 +524,7 @@ def select_map_ROI(data_dir,map_kind,frame,ROI_list=None):
         ROI_data_list=[]
         square_ROI=False
         for ROI in ROI_list:
-            x,y,dat,square_ROI=get_subblock_data(X,Y,data,ROI)
+            x,y,dat,square_ROI=get_subblock_data(x_,y_,data,ROI)
             ROI_data_list.append([x,y,dat])
 
         if square_ROI:
@@ -1314,6 +1316,7 @@ def plot_all_maps(df,data_dir,grids,map_kind,refresh=False,no_bkg=False,parallel
             vlim=compute_vlim(df,map_dic[map_kind]['compute_func'],groups,data_dir,grids,data_coord,dim,show_hist=manual_vlim,get_former_data=get_former_data,plot_dir=plot_dir_,**kwargs)
             pickle.dump(vlim,open(osp.join(plot_dir,'data','vlim.p'),"wb"))
 
+    pickle.dump(grids,open(osp.join(plot_dir,'data','grids.p'),"wb"))
     vlim=pickle.load( open(osp.join(plot_dir,'data','vlim.p'), "rb" ))
     if force_vlim is not None:
         if force_vlim[map_kind] is not None:
@@ -1614,9 +1617,10 @@ def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=
         #     print 'z0=%f'%z0
         # plot_all_maps(df,data_dir,grids,'z_flow',refresh=refresh,no_bkg=no_bkg,parallelize=parallelize,z0=z0,timescale=timescale)
 
-def avg_ROIs(data_dir,frame_subset=None,selection_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True,refresh=False):
+def avg_ROIs(data_dir,frame_subset=None,selection_frame=None,ROI_list=None,plot_on_map=True,plot_section=True,cumulative_plot=True,avg_plot=True,refresh=False,map_kind=None):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
-    map_kind=raw_input("Give the map wou want to plot your ROIs on (div,mean_vel,z_flow,vx,vy,vz): ")
+    if map_kind is None:
+        map_kind=raw_input("Give the map wou want to plot your ROIs on (div,mean_vel,z_flow,vx,vy,vz): ")
     plot_all_avg_ROI(df,data_dir,map_kind,frame_subset=frame_subset,selection_frame=selection_frame,ROI_list=ROI_list,plot_on_map=plot_on_map,plot_section=plot_section,cumulative_plot=cumulative_plot,avg_plot=avg_plot,timescale=timescale)
 
 def XY_flow(data_dir,window_size=None,refresh=False,line=None,orientation=None,frame_subset=None,selection_frame=None,z_depth=None):
