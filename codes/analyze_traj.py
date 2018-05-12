@@ -16,6 +16,7 @@ import seaborn as sns
 import datetime
 from mpl_toolkits.mplot3d import axes3d
 from lmfit import Parameters, Model
+from scipy.optimize import curve_fit
 
 
 color_list=[c['color'] for c in list(plt.rcParams['axes.prop_cycle'])]
@@ -746,7 +747,7 @@ def fit_msd(msd,trajectory,save_plot=False,model_bounds={'P':[0,300],'D':[0,1e8]
     else:
         outdir=None
 
-    # n=msd['numpoints'][msd['numpoints']>msd['numpoints'].max()*0.7].size #fit MSD only on part with enough statistics
+    n=msd['numpoints'][msd['numpoints']>msd['numpoints'].max()*0.5].size #fit MSD only on part with enough statistics
     #lmfit model
     mean_vel=trajectory['v'][1:].mean()
     success=False;best=None;logx=False;logy=False
@@ -772,7 +773,7 @@ def fit_msd(msd,trajectory,save_plot=False,model_bounds={'P':[0,300],'D':[0,1e8]
             msd['weights']=1./(msd['msds_std']+1) #to ensure no div by 0
             # best=func_model.fit(msd['msds'][0:n],t=msd['tau'][0:n],params=p)
             msd.dropna(inplace=True)
-            best=func_model.fit(msd['msds'].values,t=msd['tau'].values,params=p,weights=msd['numpoints'])
+            best=func_model.fit(msd['msds'][0:n],t=msd['tau'][0:n],params=p,weights=msd['weights'][0:n])
             
             if best.success==False:
                 print "WARNING: fit_msd failed"
@@ -782,17 +783,17 @@ def fit_msd(msd,trajectory,save_plot=False,model_bounds={'P':[0,300],'D':[0,1e8]
             success=False
 
     if save_plot:
-        ax = msd.plot.scatter(x="tau", y="msds", logx=logx, logy=logy)
+        ax = msd.plot.scatter(x="tau", y="msds",yerr="msds_std", logx=logx, logy=logy)
         if success:
             fitted=func(msd['tau'],*best.best_values.values())
             fitted_df=pd.DataFrame({'fitted':fitted,'tau':msd['tau']})
             fitted_df.plot(x="tau", y="fitted", logx=logx, logy=logy, ax=ax)
             if model=='biased_diff':
-                title_ = 'D=%0.2f'%best.best_values['D']+r' $\mu m^2/min$, '+'v=%0.2f'%best.best_values['v']+r' $\mu m/min$'
+                title_ = 'D=%0.2f'%best.best_values['D']+r' $\mu m^2/min$, '+'v=%0.2f'%best.best_values['v']+r' $\mu m/min$'+r' $\chi$'+'=%0.2f'%best.redchi
             elif model=='PRW':
-                title_ = 'P=%0.2f min'%best.best_values['P']
+                title_ = 'P=%0.2f min'%best.best_values['P']+r' $\chi$'+'=%0.2f'%best.redchi
             elif model=='pure_diff':
-                title_ = 'D=%0.2f'%best.best_values['D']+r' $\mu m^2/min$'
+                title_ = 'D=%0.2f'%best.best_values['D']+r' $\mu m^2/min$'+r' $\chi$'+'=%0.2f'%best.redchi
             ax.set_title(title_)
         ax.set_xlabel('lag time (min)')
         ax.set_ylabel(r'MSD ($\mu m^2$)')
@@ -801,7 +802,53 @@ def fit_msd(msd,trajectory,save_plot=False,model_bounds={'P':[0,300],'D':[0,1e8]
         else:
             savefig(osp.join(outdir,'%d.svg'%traj), dpi=300, bbox_inches='tight')
             close()
-    return best,mean_vel,success
+    return best,mean_vel,success,best.redchi
+
+def fit_lin(data,fitxrange=None,zero_intercept=False):
+    """This function performs a linear fit. Some fitting range can be specified with fitxrange. It returns the fir parameters, the error the fitted curve in a list"""
+    x0=data[:,0]
+    #prepare subdata
+    if fitxrange:
+        if type(fitxrange) is list:
+            xmin = fitxrange[0]; xmax = fitxrange[1]
+            if xmin is None:
+                xmin = data[0,0]
+            if xmax is None:
+                xmax = data[-1,0]
+            if xmax is None and ret:
+                xmax
+        elif fitxrange <= 1:
+            xmax = fitxrange*data[-1,0]
+            xmin = data[0,0]
+        else:
+            print "WARNING: no valid fitxrange provided"
+        data = data[(data[:,0]<=xmax) & (data[:,0]>=xmin)]
+
+    #fit
+    if zero_intercept:
+        f=lambda x,a:a*x
+    else:
+        f=lambda x,a,b:a*x+b
+
+    try:
+        parameters,covar = curve_fit(f,data[:,0],data[:,1])
+        if zero_intercept:
+            fitted=f(data[:,0],parameters[0]) #fitted y-data on the fitxrange interval
+            fitted_=array([data[:,0],fitted]).T
+            fitted_tot=f(x0,parameters[0])  #fitted y-data on the total interval
+        else:
+            fitted=f(data[:,0],parameters[0],parameters[1])
+            fitted_=array([data[:,0],fitted]).T
+            fitted_tot=f(x0,parameters[0],parameters[1])
+        #Rsquared
+        ymean=0 if zero_intercept else mean(data[:,1])
+        Stot=np.square(data[:,1]-ymean).sum()
+        Sres=np.square(data[:,1]-fitted).sum()
+        Rsq=1-Sres/Stot
+
+        return [parameters,np.sqrt(np.diag(covar)),fitted_,Rsq,True]
+    except RuntimeError:
+        return [np.nan,np.nan,np.nan,False]
 
 def get_obj_persistence_length(track_groups,track,traj=None,save_plot=False,dim=3):
     '''This function fits an object MSD with a PRW model to extract its persistence length'''
@@ -868,13 +915,16 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
         fig,ax,xmin,ymin,xmax,ymax,no_bkg=get_background(df_list[0],data_dir,frame,no_bkg=no_bkg)
     for k,df in enumerate(df_list):
         groups=groups_list[k]
-        group=groups.get_group(frame).reset_index(drop=True)
-        r,c=group.shape
+        if frame in groups.groups.keys():
+            group=groups.get_group(frame).reset_index(drop=True)
+            r,c=group.shape
+        else:
+            r=0 #if no cells at this frame
 
         if plot_traj:
             track_groups=df.groupby(['traj'])
 
-        for i in range(0,r):
+        for i in range(r):
             #write label
             x=group.loc[i,'x']
             y=group.loc[i,'y']
@@ -948,7 +998,7 @@ def plot_vfield(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False,plot_on_m
     norm=plt.Normalize(vlim[0],vlim[1]) if vlim is not None else None
     if black_arrows:
         data=data[:4] #remove the vz data, so no color on arrows
-    Q=ax.quiver(*data,units='x',cmap='plasma',norm=norm)
+    Q=ax.quiver(*data,units='inches',cmap='plasma',norm=norm,width=0.005)
 
     if axis_on:
         ax.grid(False)
@@ -956,7 +1006,7 @@ def plot_vfield(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False,plot_on_m
         fig.set_tight_layout(True)
 
     filename=osp.join(plot_dir,'%04d.png'%int(frame))
-    fig.savefig(filename,dpi=300)
+    fig.savefig(filename,dpi=600)
     close()
 
 def plot_div(df,frame,data_dir,no_bkg=False,vlim=None,axis_on=False):
@@ -1467,7 +1517,8 @@ def plot_all_XY_flow(df,data_dir,line=None,orientation=None,frame_subset=None,wi
 
     return plot_data_list
 
-def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=True,plot_along_Y=True,origins=None,lengthscale=1.,shift=None,avg_wind=None,):
+def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=True,plot_along_Y=True,origins=None,lengthscale=1.,shift=None,avg_wind=None,ext='',redchi_th=None):
+    """Compute MSD for all trajectories than can be shifted. Fit MSD with a model and exclude the fit if the reduced chi-squared is above the threshold redchi_th"""
     if fit_model=="biased_diff":
         cols=['traj','xmean','ymean','D','v','D_err','v_err']
         param_list=['D','v']
@@ -1485,16 +1536,28 @@ def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=Tr
         for track in track_list:
             traj=get_obj_traj(track_groups,track,dim=dim,shift=shift)
             msd=compute_msd(traj)
-            best,speed,success=fit_msd(msd,traj,save_plot=save_plot,model=fit_model,data_dir=data_dir,traj=track)
+            best,speed,success,redchi=fit_msd(msd,traj,save_plot=save_plot,model=fit_model,data_dir=data_dir,traj=track)
             if success:
                 param_val=[best.best_values[param] for param in param_list]
                 errors=[np.nan]*len(param_list)
                 if best.covar is not None:
                     errors=list(sqrt(best.covar).diagonal())
-                df_out.loc[i,cols]=[track,traj['x'].mean(),traj['y'].mean()]+param_val+errors
-                i+=1
+                if redchi_th is None:
+                    df_out.loc[i,cols]=[track,traj['x'].mean(),traj['y'].mean()]+param_val+errors
+                    i+=1
+                else:
+                    if redchi<redchi_th: #keep data if below redchi threshold
+                        df_out.loc[i,cols]=[track,traj['x'].mean(),traj['y'].mean()]+param_val+errors
+                        i+=1
 
     df_out=df_out.apply(pd.to_numeric,args=('ignore',None))
+
+    #fit gradient
+    df_fit=pd.DataFrame(columns=['gradient','R_sq','mean','std'],index=param_list)
+    for param in param_list:
+        data=df_out[['ymean',param]].values
+        parameters,errors,fitted_,Rsq,success=fit_lin(data)
+        df_fit.loc[param,['gradient','R_sq','mean','std']]=[parameters[0],Rsq,df_out[param].mean(),df_out[param].std()]
 
     #moving average along Y axis with regular spacing dY defined as 1/5 of avg_window
     if avg_wind is not None:
@@ -1506,11 +1569,14 @@ def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=Tr
         df_reg=pd.DataFrame(init_array,columns=cols_)
         for i,y in enumerate(reg_Y):
             ind = ((df_out['ymean']>=y) & ((df_out['ymean']<y+avg_wind)))
+            discard=False
+            if df_out[ind].shape[0] < 5:
+                discard=True
             mean_ = df_out[ind][param_list].mean()
             std_ = df_out[ind][param_list].std()
             for param in param_list:
-                df_reg.loc[i,param+'_mean']=mean_[param]
-                df_reg.loc[i,param+'_std']=std_[param]
+                df_reg.loc[i,param+'_mean']=mean_[param] if discard is False else np.nan
+                df_reg.loc[i,param+'_std']=std_[param] if discard is False else np.nan
         df_reg['y']=df_reg['y']+avg_wind/2. #shift y in the middle of the window
         
     if origins is not None:
@@ -1520,8 +1586,9 @@ def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=Tr
         outdir=osp.join(data_dir,'MSD')
         if osp.isdir(outdir) is False:
             os.mkdir(outdir)
-        df_out.to_csv(osp.join(outdir,'all_MSD_fit.csv'))
-        df_reg.to_csv(osp.join(outdir,'mean_along_Y.csv'))
+        df_out.to_csv(osp.join(outdir,'all_MSD_fit'+ext+'.csv'))
+        df_reg.to_csv(osp.join(outdir,'mean_along_Y'+ext+'.csv'))
+        df_fit.to_csv(osp.join(outdir,'lin-fit_along_Y'+ext+'.csv'))
 
     if plot_along_Y is not None:
         lab_dict={'v':r'$\langle v \rangle \ \mu m/min$','D':r'$D \ \mu m^2/min$'}
@@ -1531,7 +1598,7 @@ def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=Tr
             ax.set_ylabel(lab_dict[param])
             xlab='position along Y axis (px)' if origins is None else r'distance to anterior ($\mu m$)'
             ax.set_xlabel(xlab)
-            fig.savefig(osp.join(outdir,param+'_along_Y.svg'))
+            fig.savefig(osp.join(outdir,param+'_along_Y'+ext+'.svg'))
 
             if avg_wind is not None:
                 fig,ax=plt.subplots(1,1)
@@ -1539,7 +1606,7 @@ def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=Tr
                 ax.set_ylabel(lab_dict[param])
                 xlab='position along Y axis (px)' if origins is None else r'distance to anterior ($\mu m$)'
                 ax.set_xlabel(xlab)
-                fig.savefig(osp.join(outdir,param+'_mean_along_Y.svg'))
+                fig.savefig(osp.join(outdir,param+'_mean_along_Y'+ext+'.svg'))
 
     return df_out
 
@@ -1548,12 +1615,13 @@ def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=Tr
 ###########   CONTAINER METHODS   ###############################
 #################################################################
 
-def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,linewidth=1.,plot3D=False,MSD_fit=None,z_lim=None,shift_traj=False,save_MSD_plot=False,min_traj_len=None,avg_wind_along_Y=None,frame_subset=None):
+def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_labels=True,no_bkg=False,linewidth=1.,plot3D=False,MSD_fit=None,z_lim=None,shift_traj=False,save_MSD_plot=False,min_traj_len=None,avg_wind_along_Y=None,frame_subset=None,redchi_th=None):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
     if z_lim is None:
         z_lim=[df['z_rel'].min(),df['z_rel'].max()] if dim==3 else []
     df_list=[]
 
+    dont_subset_again=False
     if min_traj_len is None:
         subset=raw_input('By what do you want to filter? Type: none, ROI, track_length, frame_subset. \t ')
         if subset=='none':
@@ -1567,27 +1635,46 @@ def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_l
             frame_subset=input('Give the frame subset? (first,last): ')
             df=df[((df['frame']>=frame_subset[0]) & (df['frame']<=frame_subset[1]))]
             df_list=[df]
+            dont_subset_again=True
         else:
             print 'ERROR: not a valid answer'
             return
     else:
         if frame_subset is not None:
             df=df[((df['frame']>=frame_subset[0]) & (df['frame']<=frame_subset[1]))]
+            if df.shape[0]==0:
+                print "WARNING: no data for this frame subset"
+                return -1
+            dont_subset_again=True
         df_list=[filter_by_traj_len(df,min_traj_len=min_traj_len)]
     
-    if frame_subset is not None:
+    if frame_subset is not None and dont_subset_again is False:
         df_list_=[]
         for df in df_list:
             df=df[((df['frame']>=frame_subset[0]) & (df['frame']<=frame_subset[1]))]
-            df_list_.append(df)
+            if df.shape[0]!=0:
+                df_list_.append(df)
         df_list=df_list_
+        if len(df_list)==0:
+            print "WARNING: no data for this frame subset"
+            return -1
+
+    #remove empty data
+    for df in list(df_list):
+        if df.shape[0]==0:
+            df_list.pop(0)
+    if len(df_list)==0:
+        print "WARNING: no data for this frame subset"
+        return -1    
 
     shift=get_shift(data_dir,timescale,lengthscale) if shift_traj else None
 
-    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=0.75/linewidth,plot3D=plot3D,dim=dim,shift=None)
+
+    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=0.75/linewidth,plot3D=plot3D,dim=dim,shift=shift)
     
     if MSD_fit is not None:
-        plot_all_MSD(df_list,data_dir,fit_model=MSD_fit,dim=dim,lengthscale=lengthscale,save_plot=save_MSD_plot,shift=shift,origins=shift.loc[0,'y0'],avg_wind=avg_wind_along_Y)
+        ext='_frame-subset_%d-%d'%(frame_subset[0],frame_subset[1]) if frame_subset is not None else ''
+        plot_all_MSD(df_list,data_dir,fit_model=MSD_fit,dim=dim,lengthscale=lengthscale,save_plot=save_MSD_plot,shift=shift,origins=shift.loc[0,'y0'],avg_wind=avg_wind_along_Y,ext=ext,redchi_th=redchi_th)
 
 def map_analysis(data_dir,refresh=False,parallelize=False,x_grid_size=10,no_bkg=False,z0=None,dimensions=None,axis_on=False,plot_on_mean=True,black_arrows=True,manual_vlim=False):
     df,lengthscale,timescale,columns,dim=get_data(data_dir,refresh=refresh)
