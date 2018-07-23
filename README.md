@@ -1,6 +1,6 @@
 # README #
 
-This codes provides different functions to analyze tracking data of cells over time and to plot this analysis as an overlay on the raw movie. Plots of trajectories, maps of the velocities and divergence are currently available.
+This codes provides different functions to analyze tracking data of cells over time and to plot this analysis as an overlay on the raw movie. Please not that 3D rendering and parallelized analysis are currently not available.
 
 ### What should be in the data directory ###
 
@@ -20,3 +20,7 @@ This codes provides different functions to analyze tracking data of cells over t
 
 with the mandatory argument: data_dir: data directory and the optional arguments: refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, plot_traj (default true) to print the cell trajectories, hide_labels (default True) to hide the cell label, no_bkg (default False) to remove the image background, linewidth (default 1.0) width of the trajectories, dimensions ([row,column] default None) to give the image dimension in case of no_bkg, x_grid_size: number of columns in the grid (default 10), z0: altitude of the z_flow surface (default None => center of z axis), axis_on: display axes along maps (default False).
 frame_subset: subset of frames to be plotted [first,last] (default None: open interactive choice), selection_frame: ROI selection frame (if None: chosen interactively), ROI_list: list of ROIs, a ROI=[xmin,xmax,ymin,ymax] in pixel (if None: chosen interactively), plot_on_map: plot section line on a map, plot_section: plot ROI average along major axis, cumulative_plot: all plots on same plot time color coded, avg_plot= average of all plots, window_size = rolling average window in um, default None => interactive choice,plot_on_mean: plot vfield on mean_vel map (default=True),black_arrows: don't use vz to color code vfield arrows (default=True)
+
+### Dependencies ###
+
+analyze_traj depends only on Python packages. Please install: pandas, skimage, numpy, matplotlib, scipy, multiprocessing, joblib, seaborn and lmfit.

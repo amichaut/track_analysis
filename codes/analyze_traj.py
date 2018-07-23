@@ -19,7 +19,7 @@ from lmfit import Parameters, Model
 from scipy.optimize import curve_fit
 
 
-color_list=[c['color'] for c in list(plt.rcParams['axes.prop_cycle'])]
+color_list=[c['color'] for c in list(plt.rcParams['axes.prop_cycle'])]+sns.color_palette("Set1", n_colors=9, desat=.5)
 
 welcome_message="""\n\n WELCOME TO TRACK_ANALYSIS \n Developped and maintained by Arthur Michaut: arthur.michaut@gmail.com \n Last release: 05-09-2018\n\n\n     _''_\n    / o  \\\n  <       |\n    \\    /__\n    /       \\-----\n    /    \\    \\   \\__\n    |     \\_____\\  __>\n     \\--       ___/  \n        \\     /\n         || ||\n         /\\ /\\\n\n"""
 usage_message="""Usage: \n- plot cells analysis using cell_analysis(data_dir,refresh,parallelize,plot_traj,hide_labels,no_bkg,linewidth,plot3D,min_traj_len,frame_subset) \t data_dir: data directory, refresh (default False) to refresh the table values, parallelize (default False) to run analyses in parallel, 
@@ -35,6 +35,17 @@ print usage_message
 print 'WARNING parallelize is not available!'
 
 global map_dic
+
+
+#################################################################
+#################     Plot style method   #######################
+#################################################################
+
+def paper_style(): 
+    mpl.rcParams.update(mpl.rcParamsDefault) #ensure the default params are active
+    sns.set_style("ticks")
+    sns.set_context("paper", font_scale=2.,rc={"lines.linewidth": 2,"lines.markersize":9})
+
 
 #################################################################
 ###########   PREPARE METHODS   #################################
@@ -797,9 +808,11 @@ def fit_msd(msd,trajectory,save_plot=False,model_bounds={'P':[0,300],'D':[0,1e8]
             ax.set_title(title_)
         ax.set_xlabel('lag time (min)')
         ax.set_ylabel(r'MSD ($\mu m^2$)')
+        sns.despine()
         if outdir is None:
             print "WARNING: can't save MSD plot, data_dit not provided"
         else:
+
             savefig(osp.join(outdir,'%d.svg'%traj), dpi=300, bbox_inches='tight')
             close()
     return best,mean_vel,success,best.redchi
@@ -938,7 +951,7 @@ def plot_cells(df_list,groups_list,frame,data_dir,plot_traj=False,z_lim=[],hide_
                 lw_ref=rcParams['lines.linewidth']
                 ms_ref=rcParams['lines.markersize']
                 size_factor=lengthscale*length_ref
-                lw=lw_ref*size_factor; ms=ms_ref*size_factor
+                lw=lw_ref*size_factor; ms=ms_ref*size_factor*1.5
                 #plot trajectory
                 traj=get_obj_traj(track_groups,track,max_frame=frame,dim=dim,shift=shift)
                 traj_length,c=traj.shape
@@ -1438,6 +1451,7 @@ def plot_all_avg_ROI(df,data_dir,map_kind,frame_subset=None,selection_frame=None
             ax.set_xlabel(xlab)
             ax.set_ylabel(map_dic[map_kind]['cmap_label'])
             filename=plot_data_list[0][str(i)]['filename_prefix']+'_average.png'
+            sns.despine()
             fig.savefig(filename,dpi=300,bbox_inches='tight')
             close()
 
@@ -1557,7 +1571,7 @@ def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=Tr
     for param in param_list:
         data=df_out[['ymean',param]].values
         parameters,errors,fitted_,Rsq,success=fit_lin(data)
-        df_fit.loc[param,['gradient','R_sq','mean','std']]=[parameters[0],Rsq,df_out[param].mean(),df_out[param].std()]
+        df_fit.loc[param,['gradient','grad_err','mean','std']]=[parameters[0],errors[0],df_out[param].mean(),df_out[param].std()]
 
     #moving average along Y axis with regular spacing dY defined as 1/5 of avg_window
     if avg_wind is not None:
@@ -1598,6 +1612,7 @@ def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=Tr
             ax.set_ylabel(lab_dict[param])
             xlab='position along Y axis (px)' if origins is None else r'distance to anterior ($\mu m$)'
             ax.set_xlabel(xlab)
+            sns.despine()
             fig.savefig(osp.join(outdir,param+'_along_Y'+ext+'.svg'))
 
             if avg_wind is not None:
@@ -1606,6 +1621,7 @@ def plot_all_MSD(df_list,data_dir,fit_model=None,dim=3,save_plot=False,to_csv=Tr
                 ax.set_ylabel(lab_dict[param])
                 xlab='position along Y axis (px)' if origins is None else r'distance to anterior ($\mu m$)'
                 ax.set_xlabel(xlab)
+                sns.despine()
                 fig.savefig(osp.join(outdir,param+'_mean_along_Y'+ext+'.svg'))
 
     return df_out
@@ -1670,7 +1686,7 @@ def cell_analysis(data_dir,refresh=False,parallelize=False,plot_traj=True,hide_l
     shift=get_shift(data_dir,timescale,lengthscale) if shift_traj else None
 
 
-    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=0.75/linewidth,plot3D=plot3D,dim=dim,shift=shift)
+    plot_all_cells(df_list,data_dir,plot_traj=plot_traj,z_lim=z_lim,hide_labels=hide_labels,no_bkg=no_bkg,parallelize=parallelize,lengthscale=lengthscale,length_ref=0.75*linewidth,plot3D=plot3D,dim=dim,shift=shift)
     
     if MSD_fit is not None:
         ext='_frame-subset_%d-%d'%(frame_subset[0],frame_subset[1]) if frame_subset is not None else ''
