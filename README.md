@@ -1,6 +1,9 @@
 # README #
 
-This codes provides different functions to analyze tracking data of cells over time and to plot this analysis as an overlay on the raw movie. Please not that 3D rendering and parallelized analysis are currently not available.
+This code provides different functions to analyze tracking data of cells over time and to plot this analysis as an overlay on the raw movie. Please not that 3D rendering and parallelized analysis are currently not available.
+
+IMPORTANT: this project was released for work presented in this Ph.D. thesis: https://publication-theses.unistra.fr/public/theses_doctorat/2018/MICHAUT_Arthur_2018_ED414.pdf. 
+It led to an active project in development available here: https://gitlab.pasteur.fr/track-analyzer/track-analyzer. 
 
 ### What should be in the data directory ###
 
